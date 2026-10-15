@@ -319,3 +319,11 @@ Telemetry `telemetry/torcs_v3_physics_20261015-105228/ticks.csv` (only `track9` 
 - ABS wheel-slip control and proportional traction-control system.
 - Smooth throttle curve and RPM-based gear shifting with minimum hold time
   to prevent gear hunting.
+
+## V3.8 result — REVERT
+- Lap: 1:42.064, damage 0, but 1 off-track event (max |trackPos| 1.272 > 1.0).
+- Decision: REVERT BRAKE_DECEL to 8.5. A 0.5 s gain does not justify leaving the track; a repeat could end in damage.
+
+## FINAL — V3.5 parameters frozen
+- Best clean lap: **1:42.592**, damage 0, 0 off-track events, max 203 km/h (standing start, Corkscrew).
+

@@ -1,4 +1,4 @@
-"""TORCS V3 Physics-Based Driver.
+﻿"""TORCS V3 Physics-Based Driver.
 
 Enhancements over V2:
 1. Physics-based target speed using kinematic braking distance: v = sqrt(v_c^2 + 2 * a * d).
@@ -28,7 +28,7 @@ PARAMS = {
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
     "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.6 tried 50.0 -> REVERT]
     "V_CORNER_BONUS": 45.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.4: was 35.0]
-    "BRAKE_DECEL": 9.5,      # Estimated braking deceleration capacity (m/s^2)     [V3.5: was 7.0; V3.8: was 8.5]
+    "BRAKE_DECEL": 8.5,      # Estimated braking deceleration capacity (m/s^2)     [V3.5: was 7.0; V3.8 tried 9.5 -> REVERT: left the track]
     "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
     "STRAIGHT_DIST": 100.0,  # Lookahead distance above which steering uses the reduced aim gain (m)
     # --- Enhancement 2: Steering & Racing Line ---
