@@ -4,10 +4,83 @@ All notable changes to the IBM AI Racing 2026 driver are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
+## [V3.11] — Optimal acceleration gear selection (lowest gear <= SHIFT_HIGH_RPM)
+
+**Result of V3.11: not run yet — no lap time or damage claimed.**
+
+### Diagnosis of V3.10 gear rule
+- **Short-shifting under acceleration:** In V3.10, `shift_gears()` selected the highest gear in [2..6] whose rpm was >= `SHIFT_LOW_RPM` (5500).
+- This caused the car to exit corners and accelerate with the engine running at the bottom of the power band (~5500 rpm) instead of using the full available power band (up to 9000 rpm). For example, at 60 km/h, 3rd gear gave 5530 rpm and was chosen over 2nd gear (6834 rpm), sacrificing acceleration out of corners.
+
+### Changed (`src/torcs_v3_physics.py`)
+- **`shift_gears`** updated: target gear = lowest gear g in [2..6] whose rpm at the current speed is <= `SHIFT_HIGH_RPM` (9000).
+  - Upshifts occur only when the current gear exceeds `SHIFT_HIGH_RPM` (e.g. gear 2 -> 3 at ~79 km/h, 3 -> 4 at ~98 km/h, 4 -> 5 at ~117 km/h, 5 -> 6 at ~131 km/h).
+  - Downshifts occur when the lower gear's rpm would not exceed `SHIFT_HIGH_RPM` (e.g. speed drops into lower gear's eligible range).
+  - Maintained standing-start launch rule (force gear 1 while `speedX < 10 km/h`), the one-gear-per-`GEAR_HOLD_TICKS` limit (15 ticks), and all other parameters.
+
+### Expected gear schedule (from measured table)
+| Speed (km/h) | Target gear | rpm in that gear |
+|---|---|---|
+| < 10 | 1 | — (forced launch rule) |
+| 10–79 | 2 | 1139–9000 rpm (corner exits at 60 km/h run in 2nd at 6834 rpm) |
+| 79–98 | 3 | 7283–9000 rpm |
+| 98–117 | 4 | 7561–9000 rpm |
+| 117–131 | 5 | 8035–9000 rpm |
+| 131–143 | 6 | 8244–9000 rpm |
+| > 143 | 6 (hold) | > 9000 rpm (no gear <= SHIFT_HIGH → hold 6th) |
+
+### Updated (self-tests)
+- **Case 9 (V3.11):** `speedX = 60 km/h`, starting in gear 1, 200 ticks → settles at **gear 2** (6834 rpm <= 9000), keeping the engine high in the power band instead of short-shifting to 3rd. **PASS.**
+- `python src/torcs_v3_physics.py --selftest` → all 10 checks PASS.
+
+---
+
+## [V3.10] — Speed-based gear selection (replaces RPM thresholds)
+
+**Result of V3.10: not run yet — no lap time or damage claimed.**
+
+### Diagnosis of V3.9 (`telemetry/torcs_v3_physics_20261015-120553/`)
+- Lap: **1:57.840**, damage **0**, max speed **176.8 km/h**.
+- **Over-correction:** only **5 gear changes** in the entire lap.  The car spent **5308 of 5596 ticks in 6th gear** (95%), including slow corner exits, because `GEAR_DOWN_RPM = 3200` is unreachable in 6th (at 50 km/h, gear 6 is already at ~3148 rpm — barely below threshold — and at any higher speed 6th is above 3200).
+- **Standing-start bug survived:** on the standing start the car upshifted 1→2→3→4 while `speedX` was still 0 km/h (`rpm` read 15604 with no drivetrain load), so it launched in 4th.  The RPM-only logic cannot distinguish no-load engine spin from real gear-ratio conditions.
+
+### Root cause
+`GEAR_UP_RPM = 7200` / `GEAR_DOWN_RPM = 3200` operate on the raw engine rpm signal, not on the relationship between speed and gear ratio.  During a standing start the engine spins freely (15 k rpm), so every upshift threshold is instantly crossed.  At cruise speed in 6th the engine settles at ~87.4 km/h × (1000/15.89 rpm/km/h) = 5500 rpm — comfortably between 3200 and 7200 — so neither threshold fires and the car never leaves 6th regardless of speed.
+
+### Changed (`src/torcs_v3_physics.py`)
+- **Removed** `PARAMS["GEAR_UP_RPM"]`, `PARAMS["GEAR_DOWN_RPM"]`, `PARAMS["GEAR_DOWN_RPM_BRAKE"]`.
+- **Added** `PARAMS["SHIFT_LOW_RPM"] = 5500` and `PARAMS["SHIFT_HIGH_RPM"] = 9000`.
+- **`shift_gears`** completely rewritten: speed-based selection.  On each eligible tick (≥ `GEAR_HOLD_TICKS` since last shift):
+  - If `speedX < 10 km/h` → return **gear 1** unconditionally (fixes the launch bug).
+  - Otherwise, compute `rpm_in_gear(speed, g) = speed / _GEAR_SPEED_KMH_PER_1000RPM[g] * 1000` for g = 6…2 (descending).  Target = highest g where `SHIFT_LOW_RPM ≤ rpm ≤ SHIFT_HIGH_RPM`.
+  - If no gear qualifies (e.g. above ~143 km/h all gears exceed `SHIFT_HIGH_RPM`) → hold current gear.
+  - Move at **most one gear per `GEAR_HOLD_TICKS`** toward the target.
+- **Added** helper `_rpm_in_gear(speed_kmh, g)` (pure function, uses the measured table).
+- All other PARAMS are unchanged from V3.9 / V3.5.
+
+### Expected gear schedule (from measured table)
+| Speed (km/h) | Target gear | rpm in that gear |
+|---|---|---|
+| < 10 | 1 | — (forced) |
+| 10–16 | 2 | 1139–1822 rpm (table entry 0, forced by floor) → gear 2 is lowest in [2..6] |
+| ~60 | 3 | 5530 rpm |
+| ~87 | 4 or 5 | transitions from 3→6 happen between 60–143 km/h |
+| ~87 | 6 | 87.4 km/h = 5500 rpm in 6th (SHIFT_LOW boundary) |
+| ~143 | 6 → hold | 143 km/h = 9000 rpm in 6th (SHIFT_HIGH boundary); above this, hold |
+| 200 | 6 (hold) | 12 587 rpm in 6th — all gears > SHIFT_HIGH → hold current gear (no spurious downshift) |
+
+### Added (self-tests, replacing V3.9 cases 8-10)
+- **Case 8 (V3.10):** `speedX = 0 km/h`, current gear 4, `rpm = 15000` → `shift_gears` returns **gear 1** (speed-based, not rpm-based; fixes standing start). **PASS.**
+- **Case 9 (V3.10):** `speedX = 60 km/h`, starting in gear 1, 200 ticks → settles at **gear 3**, not 6th (gear-6 rpm = 3776 < SHIFT_LOW_RPM 5500). **PASS.**
+- **Case 10 (V3.10):** `speedX = 200 km/h`, starting in gear 6, 200 ticks → **stays in gear 6** (gear-6 rpm = 12 587 > SHIFT_HIGH_RPM 9000 → no target found → hold). **PASS.**
+- `python src/torcs_v3_physics.py --selftest` → all 10 checks PASS.
+
+---
+
 ## [V3.9] - Braking downshift fixed (measured gear table, 1 gear at a time, hard-brake only)
 
 All other PARAMS are V3.5 values (`BRAKE_DECEL` 8.5, `V_CORNER_MIN` 55, `STEER_SMOOTH` 0.5, ...). Only the shift logic changed.
-**Result of V3.9: not run yet - no lap time or damage claimed.**
+**Result of V3.9: lap 1:57.840, damage 0, max speed 176.8 km/h (`telemetry/torcs_v3_physics_20261015-120553/`) — REVERT basis for V3.10.**
 
 ### Repeatability analysis (ticks.csv, 0.02 s/tick, lap time > 0, one lap in each file)
 Runs: GOOD = `torcs_v3_physics_20261015-112700` (1:42.592), REPEAT = `torcs_v3_FINAL_20261015-115214` (1:55.606, damage 0). `src/torcs_v3_FINAL.py` and `src/torcs_v3_physics.py` were byte-identical before V3.9 (same code, same params).

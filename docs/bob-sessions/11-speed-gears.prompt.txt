@@ -1,0 +1,14 @@
+﻿V3.9 raced: 1:57.840, 0 damage, max speed only 176.8 km/h (telemetry/torcs_v3_physics_20261015-120553). Over-correction: only 5 gear
+changes in the whole lap. The car spends 5308 of 5596 ticks in 6th gear, including slow corner exits,
+because GEAR_DOWN_RPM 3200 is never reached in 6th. Also at the standing start it upshifts 1->2->3->4 while
+speedX is still 0 (rpm 15604 with no load), so it launches in 4th.
+
+Make V3.10: replace the rpm-threshold logic with SPEED-BASED gear selection using the per-gear km/h per
+1000 rpm you measured from telemetry (_GEAR_SPEED_KMH_PER_1000RPM):
+ - target gear = the highest gear whose engine rpm at the current speed is >= SHIFT_LOW_RPM (new PARAM,
+   start 5500), but never a gear whose rpm would exceed SHIFT_HIGH_RPM (new PARAM, start 9000);
+ - move at most one gear per GEAR_HOLD_TICKS;
+ - while speedX < 10 km/h use gear 1 (fixes the launch).
+Remove GEAR_UP_RPM/GEAR_DOWN_RPM/GEAR_DOWN_RPM_BRAKE if no longer used. Do not change any other parameter.
+Update the self-tests (launch at 0 km/h -> gear 1; 60 km/h corner exit -> not 6th; 200 km/h -> 6th) and
+run them. Add V3.9 (result + diagnosis) and V3.10 to CHANGELOG.md. Do not run the race or invent lap times.

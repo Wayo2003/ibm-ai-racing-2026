@@ -1,0 +1,8 @@
+﻿Code review of V3.10 shift_gears(): choosing the HIGHEST gear whose rpm is >= SHIFT_LOW_RPM short-shifts:
+the engine runs near 5500 rpm, at the bottom of the band, which costs acceleration out of corners. For
+acceleration the engine should be kept high in the band. Change the rule (V3.11) to: target gear = the
+LOWEST gear in [2..6] whose rpm at the current speed is <= SHIFT_HIGH_RPM (upshift only when the current
+gear would exceed SHIFT_HIGH_RPM; downshift when the lower gear's rpm would still be <= SHIFT_HIGH_RPM and
+the current rpm is below SHIFT_LOW_RPM). Keep the launch rule, the one-gear-per-GEAR_HOLD_TICKS limit and
+all other parameters. Update/keep the self-tests passing, run them, add V3.11 to CHANGELOG.md.
+Do not run the race or invent lap times.
