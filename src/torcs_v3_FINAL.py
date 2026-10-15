@@ -1,4 +1,4 @@
-﻿"""TORCS V3 Physics-Based Driver.
+"""TORCS V3 Physics-Based Driver.
 
 Enhancements over V2:
 1. Physics-based target speed using kinematic braking distance: v = sqrt(v_c^2 + 2 * a * d).
@@ -10,6 +10,23 @@ V3.2 additions:
 5. Robust free distance: rolling minimum over the last N ticks so a single long spike cannot cancel braking.
 6. Safer braking: lower BRAKE_DECEL / V_CORNER_SHARP, full brake when required deceleration exceeds
    BRAKE_DECEL, and automatic downshift during braking.
+V3.9 fix:
+7. Braking downshift rewritten: measured gear table, one gear at a time, only under hard braking
+   (brake > 0.5) with low rpm, never into an rpm above GEAR_UP_RPM.
+V3.10 fix:
+8. RPM-threshold shifting replaced by speed-based gear selection: target gear = highest gear
+   where rpm-at-speed >= SHIFT_LOW_RPM (5500), but never exceeding SHIFT_HIGH_RPM (9000);
+   speed < 10 km/h forces gear 1 (fixes standing-start launch into 4th).
+   Removed GEAR_UP_RPM, GEAR_DOWN_RPM, GEAR_DOWN_RPM_BRAKE.
+V3.11 fix:
+9. Target gear changed to the LOWEST gear in [2..6] whose rpm-at-speed <= SHIFT_HIGH_RPM (9000).
+   Keeps engine high in the power band (6000-9000 rpm) out of corners instead of short-shifting
+   at the 5500 rpm floor.
+V3.12 fix:
+10. Steering weave eliminated: aim term active only when approaching corners (free distance < STRAIGHT_DIST)
+    and smoothly blended with distance; aim gain on straights set to 0.0 (replaces step switch);
+    added small dead-band (STEER_DEADBAND = 0.01) to eliminate zero-crossing chatter; kept STEER_SMOOTH = 0.5.
+    Speed, braking, and gear shifting parameters unchanged.
 """
 import math
 import sys as _sys
@@ -36,7 +53,7 @@ PARAMS = {
     "CENTERING_GAIN": 0.40,       # Base gain to center vehicle within track bounds
     "TRACK_MARGIN": 0.70,         # |trackPos| threshold beyond which extra centering applies
     "EXTRA_CENTERING_GAIN": 1.20, # Additional centering gain when exceeding TRACK_MARGIN
-    "STRAIGHT_STEER_AIM": 0.25,   # Reduced steer aim gain on straights to prevent weaving
+    "STEER_DEADBAND": 0.01,       # V3.12: small dead-band to eliminate straight-line chatter around zero
     "STEER_LOCK": 0.366,          # Maximum steering lock angle in radians (TORCS car standard)
     "STEER_AIM_TOP_N": 3,         # Number of longest rays used in weighted-average aim  [V3.2]
     "STEER_SMOOTH": 0.5,          # Low-pass coefficient for steering: steer = α*prev + (1-α)*raw [V3.2; V3.7 tried 0.3 -> REVERT]
@@ -44,8 +61,8 @@ PARAMS = {
     "ABS_SLIP": 10.0,         # Slip threshold (km/h) where wheel speed < speedX before ABS intervenes
     "TC_SLIP": 2.0,           # Differential spin threshold (rad/s) between rear and front wheels
     "TC_GAIN": 0.08,          # Proportional cut per unit of excessive wheel spin diff
-    "GEAR_UP_RPM": 7200,      # Engine RPM threshold to upshift (gears 1-5 -> 2-6)
-    "GEAR_DOWN_RPM": 3200,    # Engine RPM threshold to downshift (gears 2-6 -> 1-5)
+    "SHIFT_LOW_RPM": 5500,    # V3.10: target gear must have engine rpm >= this at current speed
+    "SHIFT_HIGH_RPM": 9000,   # V3.10: never select a gear whose rpm at current speed exceeds this
     "GEAR_HOLD_TICKS": 15,    # Minimum simulation steps (~0.3s) between gear shifts
     "WHEEL_RADIUS": 0.3179,   # Wheel radius in meters (for wheel speed computation)
     # --- Enhancement 4 (V3.2): Robust braking distance memory ---
@@ -185,10 +202,12 @@ def calculate_steering(S):
     d = get_free_distance_ahead(S)
     aim_angle_rad = get_aim_angle_rad(S)
 
-    # Reduce aim gain on straights to prevent high-speed oscillation
-    aim_gain = (
-        PARAMS["STRAIGHT_STEER_AIM"] if d >= PARAMS["STRAIGHT_DIST"] else PARAMS["STEER_AIM"]
-    )
+    # V3.12: Smooth distance-based aim blending; zero on open straights
+    if d >= PARAMS["STRAIGHT_DIST"]:
+        aim_gain = 0.0
+    else:
+        blend = (PARAMS["STRAIGHT_DIST"] - d) / PARAMS["STRAIGHT_DIST"]
+        aim_gain = PARAMS["STEER_AIM"] * blend
 
     trackPos = S.get("trackPos", 0.0)
     angle = S.get("angle", 0.0)
@@ -204,7 +223,11 @@ def calculate_steering(S):
     raw_steer = (angle - aim_gain * aim_angle_rad - centering) / PARAMS["STEER_LOCK"]
     raw_steer = max(-1.0, min(1.0, raw_steer))
 
-    # V3.2: low-pass filter
+    # V3.12: Dead-band around zero to eliminate micro-chatter on straights
+    if abs(raw_steer) < PARAMS["STEER_DEADBAND"]:
+        raw_steer = 0.0
+
+    # Low-pass filter (STEER_SMOOTH = 0.5)
     alpha = PARAMS["STEER_SMOOTH"]
     steer = alpha * _prev_steer + (1.0 - alpha) * raw_steer
     steer = max(-1.0, min(1.0, steer))
@@ -268,50 +291,74 @@ def calculate_throttle_and_brake(S, steer, target_speed):
     return accel, brake
 
 
-# Gear ratio lookup (approximate km/h per 1000 RPM for a typical TORCS car)
-# Used to pick the correct gear for a given speed when braking.
-_GEAR_SPEED_KMH_PER_1000RPM = [0.0, 8.5, 14.5, 20.5, 28.0, 36.0, 44.0]  # index = gear
+# V3.9: km/h per 1000 rpm for each gear, MEASURED as median(speedX / (rpm/1000)) over ticks.csv of
+# torcs_v3_physics_20261015-112700 and torcs_v3_FINAL_20261015-115214 (lap time > 0, speedX > 20,
+# brake == 0, gear constant over +-5 ticks). index = gear.
+# Gear 1 was never driven at speed in the telemetry (only the standing start), so it is not measured;
+# the braking downshift never targets gear 1 (see shift_gears).
+_GEAR_SPEED_KMH_PER_1000RPM = [0.0, 0.0, 8.78, 10.85, 12.96, 14.56, 15.89]
 
 
-def shift_gears(S, current_gear, braking=False):
-    """RPM-based transmission shifting with minimum hold time between shifts.
+def _rpm_in_gear(speed_kmh, g):
+    """Return engine rpm the car would have at speed_kmh in gear g (1-6).
 
-    V3.2: when braking=True, also downshift to match engine speed to road speed
-    so the gear is correct for corner exit acceleration.
+    Uses the measured _GEAR_SPEED_KMH_PER_1000RPM table.
+    Returns 0 for gear 1 (unmeasured) so callers can decide.
+    """
+    ratio = _GEAR_SPEED_KMH_PER_1000RPM[g]
+    if ratio <= 0.0:
+        return 0.0
+    return speed_kmh / ratio * 1000.0
+
+
+def shift_gears(S, current_gear, brake=0.0):
+    """Speed-based transmission shifting with minimum hold time between shifts.
+
+    V3.11: target gear = lowest gear g in [2..6] where the engine rpm at the
+    current speed (speed / _GEAR_SPEED_KMH_PER_1000RPM[g] * 1000) is <=
+    SHIFT_HIGH_RPM.  If no gear in [2..6] qualifies (e.g. at high speeds where
+    even 6th exceeds SHIFT_HIGH_RPM), stay in the current gear.
+    While speedX < 10 km/h use gear 1.
+    Move at most one gear per GEAR_HOLD_TICKS.
     """
     global _last_shift_step, _current_step
     _current_step += 1
 
-    rpm = S.get("rpm", 0.0)
     speed = S.get("speedX", 0.0)
     gear = current_gear if current_gear and current_gear > 0 else 1
+
+    # Standing start / very slow: always gear 1
+    if speed < 10.0:
+        if gear != 1:
+            _last_shift_step = _current_step
+        return 1
 
     # Hold time to avoid rapid gear hunting/oscillation
     if (_current_step - _last_shift_step) < PARAMS["GEAR_HOLD_TICKS"]:
         return max(1, min(6, gear))
 
-    if braking and gear > 1:
-        # V3.2: downshift to the highest gear whose max speed exceeds current speed.
-        # _GEAR_SPEED_KMH_PER_1000RPM[g] * GEAR_UP_RPM/1000 gives roughly the
-        # upshift speed for gear g — use it as the gear's comfortable max speed.
-        target_gear = gear
-        for g in range(1, gear):
-            max_speed_g = _GEAR_SPEED_KMH_PER_1000RPM[g] * PARAMS["GEAR_UP_RPM"] / 1000.0
-            if speed <= max_speed_g:
-                target_gear = g
-                break
-        if target_gear < gear:
-            _last_shift_step = _current_step
-            return max(1, min(6, target_gear))
+    high = PARAMS["SHIFT_HIGH_RPM"]
 
-    if gear < 6 and rpm > PARAMS["GEAR_UP_RPM"]:
-        gear += 1
-        _last_shift_step = _current_step
-    elif gear > 1 and rpm < PARAMS["GEAR_DOWN_RPM"]:
-        gear -= 1
-        _last_shift_step = _current_step
+    # Find target: lowest gear in [2..6] whose rpm-at-speed is <= high
+    target = None
+    for g in range(2, 7):
+        r = _rpm_in_gear(speed, g)
+        if r <= high:
+            target = g
+            break
 
-    return max(1, min(6, gear))
+    if target is None:
+        # No gear in [2..6] is in range (e.g. speed > 143 km/h); keep current
+        return max(1, min(6, gear))
+
+    if target == gear:
+        return gear
+
+    # Move at most one step toward target
+    new_gear = gear + (1 if target > gear else -1)
+    new_gear = max(1, min(6, new_gear))
+    _last_shift_step = _current_step
+    return new_gear
 
 
 def recovery_maneuver(S):
@@ -337,7 +384,7 @@ def drive_v3(c):
         R["accel"] = accel
         R["brake"] = brake
         R["steer"] = steer
-        R["gear"] = shift_gears(S, R.get("gear", 1), braking=False)
+        R["gear"] = shift_gears(S, R.get("gear", 1))
         return
 
     # Priority 2: Physics-based control
@@ -348,7 +395,7 @@ def drive_v3(c):
     R["steer"] = steer
     R["accel"] = accel
     R["brake"] = brake
-    R["gear"] = shift_gears(S, R.get("gear", 1), braking=(brake > 0.0))
+    R["gear"] = shift_gears(S, R.get("gear", 1), brake=brake)
 
 
 def _reset_state():
@@ -523,6 +570,73 @@ def _run_selftest():
     check(
         f"200 m free → target equals physics formula (target={target:.1f}, expected={expected_target:.1f})",
         abs(target - expected_target) < 0.1,
+        0.0,
+    )
+
+    # --- Case 8 (V3.10): launch at 0 km/h → gear 1 (fixes standing-start in 4th) ---
+    # speed < 10 km/h must always force gear 1 regardless of current gear.
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=0.0)
+    S["rpm"] = 15000.0  # high no-load rpm, as seen in the V3.9 standing-start telemetry
+    g = shift_gears(S, 4)  # car is already in 4th (the V3.9 bug)
+    check(f"Standing start (0 km/h, gear 4, rpm 15000) → gear 1 (got {g})", g == 1, 0.0)
+
+    # --- Case 9 (V3.11): 60 km/h corner exit → gear 2 (lowest gear <= SHIFT_HIGH_RPM) ---
+    # At 60 km/h: gear 2 = 6834 rpm (<= 9000), gear 3 = 5530 rpm.
+    # Target = gear 2 (keeps rpm high in the power band instead of short-shifting to 3).
+    # Starting from gear 1, after hold-time ticks, must settle at gear 2.
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=60.0)
+    gear = 1
+    settled = 1
+    for _ in range(200):
+        gear = shift_gears(S, gear)
+        settled = gear
+    r2 = _rpm_in_gear(60.0, 2)
+    check(
+        f"60 km/h corner exit → gear 2 (settled gear={settled}, gear-2 rpm={r2:.0f} <= SHIFT_HIGH_RPM {PARAMS['SHIFT_HIGH_RPM']})",
+        settled == 2,
+        0.0,
+    )
+
+    # --- Case 10 (V3.10): 200 km/h → stays in 6th (no spurious downshift) ------
+    # At 200 km/h all gears exceed SHIFT_HIGH_RPM (9000), so target=None → hold current gear.
+    # Starting in 6th, after many ticks, must remain in 6th.
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=200.0)
+    gear = 6
+    for _ in range(200):
+        gear = shift_gears(S, gear)
+    r6 = _rpm_in_gear(200.0, 6)
+    check(
+        f"200 km/h in 6th → stays 6th (gear={gear}, gear-6 rpm={r6:.0f} > SHIFT_HIGH_RPM {PARAMS['SHIFT_HIGH_RPM']}, no target → hold)",
+        gear == 6,
+        0.0,
+    )
+
+    # --- Case 11 (V3.12): noisy sensor frames on a straight → <= 2 sign changes ---
+    # Scenario: car is driving at 150 km/h on a straight (d >= STRAIGHT_DIST).
+    # Sensor rays ahead have alternating left/right noise across 50 frames.
+    # In V3.11 this caused dozens of sign flips; in V3.12 aim_gain is 0 on straights
+    # and the dead-band suppresses jitter, resulting in <= 2 sign changes (0 in steady state).
+    _reset_state()
+    straight_flips = 0
+    prev_s = None
+    for i in range(50):
+        t = [20.0] * 19
+        t[8] = 150.0 + (30.0 if i % 2 == 0 else -20.0)
+        t[9] = 160.0
+        t[10] = 150.0 + (30.0 if i % 2 == 1 else -20.0)
+        t[7] = 100.0 + (20.0 if i % 2 == 0 else -10.0)
+        t[11] = 100.0 + (20.0 if i % 2 == 1 else -10.0)
+        S = _make_state(t, angle=0.0, trackPos=0.0, speedX=150.0)
+        s = calculate_steering(S)
+        if prev_s is not None and ((s > 0 and prev_s < 0) or (s < 0 and prev_s > 0)):
+            straight_flips += 1
+        prev_s = s
+    check(
+        f"Noisy straight (50 frames) → <= 2 sign changes (got {straight_flips})",
+        straight_flips <= 2,
         0.0,
     )
 

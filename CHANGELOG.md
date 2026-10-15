@@ -485,3 +485,9 @@ Telemetry `telemetry/torcs_v3_physics_20261015-105228/ticks.csv` (only `track9` 
 ## FINAL — V3.5 parameters frozen
 - Best clean lap: **1:42.592**, damage 0, 0 off-track events, max 203 km/h (standing start, Corkscrew).
 
+
+## FINAL — V3.12 (recorded)
+- Recorded official lap: **1:42.868**, damage 0, 0 off-track events, max 202.7 km/h, standing start, Corkscrew.
+- Telemetry: evidence/final_lap_laps.csv and evidence/final_lap_ticks.csv (run torcs_v3_physics_20261015-123838).
+- Driver: src/torcs_v3_FINAL.py (identical to src/torcs_v3_physics.py V3.12).
+
