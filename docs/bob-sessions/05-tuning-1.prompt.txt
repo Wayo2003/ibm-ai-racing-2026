@@ -1,0 +1,9 @@
+﻿I ran src/torcs_v3_physics.py on Corkscrew. The telemetry is in telemetry/torcs_v3_physics_20261015-110003/ (laps.csv
+and ticks.csv). Read them. Report the lap time and damage, and find the ONE section of the track
+(distFromStart range) that costs the most time or comes closest to damage (low speed vs. long
+free distance, |trackPos| near 1, heavy braking, damage increase). Distinguish observations from
+hypotheses. Propose ONE parameter change in PARAMS with its expected effect and risk, apply only
+that change, append the run to CHANGELOG.md (version, change, lap time, damage, keep/revert), and
+show the diff. Do not invent measurements.
+
+Context: V3.3 is the first clean lap (1:52.336, 0 damage, max 191.4 km/h). Corner speed V_CORNER_MIN=55 and BRAKE_DECEL=7 were chosen conservatively after two crashes at distFromStart ~2468 m, so any change must keep a safety margin in that hairpin. Prefer the change with the best expected gain per unit of risk.

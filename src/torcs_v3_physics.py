@@ -27,7 +27,7 @@ PARAMS = {
     # --- Enhancement 1: Target Speed & Braking Model ---
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
     "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.3]
-    "V_CORNER_BONUS": 35.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.3]
+    "V_CORNER_BONUS": 45.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.4: was 35.0]
     "BRAKE_DECEL": 7.0,      # Estimated braking deceleration capacity (m/s^2)     [V3.2: was 9]
     "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
     "STRAIGHT_DIST": 100.0,  # Lookahead distance above which steering uses the reduced aim gain (m)

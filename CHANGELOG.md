@@ -5,7 +5,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [V3.4] — Increase V_CORNER_BONUS for higher open-section speed with preserved hairpin safety margin
+
+### Changed (`src/torcs_v3_physics.py`)
+- `PARAMS["V_CORNER_BONUS"]`: 35.0 → 45.0 km/h.
+
+### Telemetry analysis & Rationale
+- **V3.3 Run Telemetry** (`telemetry/torcs_v3_physics_20261015-110003/`):
+  - Lap time: **1:52.336** (112.336 s)
+  - Damage: **0.0**
+  - Max speed: **191.4 km/h**
+  - Status: **Keep** (first clean baseline lap).
+- **Track Bottleneck Identified**:
+  - **Turn 11 (distFromStart 3200–3300 m)**: Apex at 3285.8 m had the lowest speed on track (62.4 km/h), highest `|trackPos|` on track (0.802 at 3288.2 m), lowest forward visibility `track9` (6.7 m at 3283.9 m), full steering saturation (steer = 1.00 for 67 ticks), and cost 3.94 s.
+  - In contrast, the hairpin at dist 2468 m was negotiated cleanly with apex speed 72.5 km/h, max `|trackPos|` 0.524, and 0 damage.
+- **Expected effect of V_CORNER_BONUS = 45.0**:
+  - In tight hairpins (dist 2468 m and 3285 m), side rays at ±30° are short (~10–15 m), resulting in an openness factor `min(track[4], track[14]) / 200` of only ~0.05–0.08. An increase of +10 km/h in bonus raises hairpin corner target speed by only +0.5 to +0.8 km/h, preserving the critical safety margin in the hairpins.
+  - In open straights and sweeping corners (openness 0.4–1.0), corner speed increases by +4 to +10 km/h, lifting top speed on straights (up to ~215 km/h theoretical target) and carrying more momentum across open sectors.
+- **Risk**: Low. Fast sweeping corners with wide geometry will be taken faster; edge protection (`TRACK_MARGIN = 0.70`, `EXTRA_CENTERING_GAIN = 1.20`) remains active if track position widens.
+
+---
+
 ## [V3.3] — Target-speed model without straight bypass, conservative V_CORNER, proportional brake
+
+### Race telemetry (`telemetry/torcs_v3_physics_20261015-110003/`)
+- **Lap time**: **1:52.336** (112.336 s)
+- **Damage**: **0.0** (0 damage accumulated across the entire lap)
+- **Max speed**: **191.4 km/h** (at step 2432, distFromStart 1782.5 m)
+- **Result**: **Keep** (first fully clean lap on Corkscrew).
 
 ### Crash evidence (V3.2, race 2, same hairpin)
 Telemetry `telemetry/torcs_v3_physics_20261015-105228/ticks.csv` (only `track9` is logged, not the other rays):
