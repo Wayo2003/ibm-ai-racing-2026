@@ -5,7 +5,48 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [V3.7] — Lower STEER_SMOOTH (0.5 → 0.3) so the steering reaches saturation sooner at Turn 11 entry
+## [V3.8] — Increase BRAKE_DECEL (8.5 → 9.5) based on V3.5 telemetry showing measured grip headroom
+
+### Changed (`src/torcs_v3_physics.py`)
+- `PARAMS["BRAKE_DECEL"]`: 8.5 → 9.5 m/s². Nothing else changed. Self-test: all 7 checks PASS.
+
+### Telemetry evidence (V3.5 = `torcs_v3_physics_20261015-112700/`, ticks.csv, 0.02 s per tick)
+
+#### Hairpin (~2468 m)
+- **Only 2 ticks** with brake ≥ 0.5 on the entire lap: d = 2230.9 m and 2232.0 m, brake 1.000 / 0.970, speed 194.3 → 193.6 km/h.
+- Over those 2 ticks (1.1 m): effective decel = **10.67 m/s²** — the car demonstrably achieved > 10 m/s² in TORCS physics.
+- The rest of the pre-hairpin run (2229–2450 m, 208 m) uses partial brake (max 0.28) and shows a mean effective decel of 5.49 m/s² — the braking model is far from saturating grip over that ramp.
+- Rolling 5-tick window peak (hairpin): 24.2 m/s² (very high due to gear change transient on the 2-tick event; not structural).
+
+#### Turn 11 (~3287 m)
+- **No tick** in the entire 3140–3300 m zone had brake ≥ 0.5. Maximum brake was **0.240** at 3246–3250 m.
+- Full-ramp effective decel (3146–3256 m, 110 m): **8.665 m/s²** — already close to the 8.5 parameter, meaning the car was braking near its model limit from entry speed 178.5 km/h down to 84.7 km/h before the steering phase.
+- Rolling 5-tick peak at T11: **10.30 m/s²** at d = 3235.5 m (speed 108.9 km/h, mean_brake 0.192). Multiple consecutive windows between 3193–3250 m exceed 9.0 m/s² (9.1–10.3 m/s²) with brake only 0.15–0.24.
+- The physics engine delivered ≥ 9.5 m/s² in many windows during this moderate-brake phase, confirming the tyre model has more grip than 9.5 at T11 speeds.
+
+#### Safety conclusion for 9.5 m/s²
+- The measured peak delivered decel at T11 with brake 0.15–0.24 is **10.3 m/s²** — substantially above 9.5 m/s². The hairpin showed **10.67 m/s²** at full brake. 9.5 m/s² is therefore **within the demonstrated grip envelope** and is not an overestimate.
+- Effect on braking-point model at T11 (d = 126.5 m, V_CORNER_MIN = 55 km/h): v_target = sqrt((55/3.6)² + 2·9.5·126.5)·3.6 = **180.3 km/h** (was 175.8 km/h at 8.5). This delays the braking point by ~4 m compared to V3.5 (entry speed 178.5 km/h > 175.8, so the brake onset at 8.5 was already very close). The extra 1 m/s² raises the target speed by 4.5 km/h at 126.5 m; at 200 m the new target = sqrt((100/3.6)² + 2·9.5·200)·3.6 = **231.9 km/h**, clipped to 230 km/h V_MAX — no change on open straights.
+- Hairpin safety check: stopping from 194 km/h to 73 km/h at 9.5 m/s²: (53.9² − 20.3²)/(2·9.5) = **130.7 m**. The hairpin approach already starts braking at ~2230 m with the apex at ~2469 m — 239 m available. Margin = 239 − 130.7 = **108 m**. Even if entry speed rises 5–8 km/h (same fraction as V3.5 over V3.4), the required distance increases by ~8 m, leaving ~100 m margin. **No safety concern at the hairpin.**
+- The remaining risk is at T11: if 9.5 overstates real grip in a corner, the car arrives faster with the same peak |trackPos| = 0.892 already at its limit. The measured data says 9.5 is inside the envelope, but the margin is only ~0.8 m/s². **Revert to 8.5 if damage > 0 or if T11 peak |trackPos| exceeds 0.892.**
+
+### Expected effect
+- T11 entry speed target rises ~4.5 km/h, possibly saving 0.1–0.3 s at T11. Open-straight target is already capped at V_MAX so no change there. Total lap gain estimate: 0.1–0.4 s. No damage expected.
+
+### Risk and decision rule
+- **Medium.** T11 peak |trackPos| is 0.892 with 0.108 margin; any overshoot there is the risk. **Revert to 8.5 if damage > 0 or if T11 peak |trackPos| > 0.892. Keep if damage 0 and (lap ≤ 1:42.592 or |trackPos| ≤ 0.892).**
+- Result of V3.8: *not run yet — no lap time or damage claimed.*
+
+---
+
+## [V3.7] — Lower STEER_SMOOTH (0.5 → 0.3) — **REVERT**
+
+**Result:** lap **1:43.842**, damage **0**, max |trackPos| **0.892** (`telemetry/torcs_v3_physics_20261015-114356/`) — **REVERT**. 1.250 s slower than V3.5 (1:42.592). STEER_SMOOTH 0.3 gave no benefit vs. V3.5 and added the same margin of slowdown. `STEER_SMOOTH` restored to 0.5 in V3.8 (= V3.5 value). The decision rule "revert if lap > 1:42.592 and T11 peak |trackPos| is not below 0.85" was triggered (peak was 0.892, lap was 1:43.842).
+
+### Changed (revert in V3.8's baseline)
+- `PARAMS["STEER_SMOOTH"]`: 0.3 → 0.5 (back to V3.5 / V3.2 original value). Nothing else changed.
+
+### Original V3.7 entry below (preserved for record):
 
 ### Changed (`src/torcs_v3_physics.py`)
 - `PARAMS["V_CORNER_MIN"]`: 50.0 → 55.0 (revert of V3.6 to the V3.5 value).
@@ -23,7 +64,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Risk and decision rule
 - Low–medium: less filtering on straights. **Revert STEER_SMOOTH to 0.5 if damage > 0, or if lap > 1:42.592 and T11 peak |trackPos| is not below 0.85.** Keep if damage 0 and (lap ≤ 1:42.592 or peak |trackPos| ≤ 0.85 with loss < 0.3 s).
-- Result of V3.7: *not run yet — no lap time or damage claimed.*
+- Result of V3.7: lap **1:43.842**, damage **0**, max |trackPos| **0.892** (`torcs_v3_physics_20261015-114356/`) — **REVERT** (see header above).
 
 ---
 

@@ -1,0 +1,10 @@
+﻿V3.7 result: 1:43.842, 0 damage, max |trackPos| 0.892 (telemetry/torcs_v3_physics_20261015-114356): slower than V3.5 with the same
+margin. Decision: REVERT STEER_SMOOTH to 0.5, so PARAMS are exactly V3.5 again (best so far: 1:42.592,
+0 damage). Record V3.7 as REVERT in CHANGELOG.md.
+
+Evidence so far: BRAKE_DECEL 7.0 -> 8.5 gave the biggest gain (-4.5 s, 0 damage). For V3.8 evaluate
+BRAKE_DECEL 8.5 -> 9.5 using the V3.5 telemetry: at the hairpin (~2468 m) and Turn 11 (~3287 m), estimate
+from speedX and brake how much deceleration the car actually achieved when brake was near 1.0, and
+whether 9.5 m/s^2 is still within that measured capability. If the data says it is not safe, propose
+the closest safe value instead. Apply only that change, run the self-test, update CHANGELOG.md.
+Do not run the race or invent lap times.
