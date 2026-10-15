@@ -5,7 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [V3.7] — Lower STEER_SMOOTH (0.5 → 0.3) so the steering reaches saturation sooner at Turn 11 entry
+
+### Changed (`src/torcs_v3_physics.py`)
+- `PARAMS["V_CORNER_MIN"]`: 50.0 → 55.0 (revert of V3.6 to the V3.5 value).
+- `PARAMS["STEER_SMOOTH"]`: 0.5 → 0.3. Nothing else changed. Self-test: all 7 checks PASS.
+
+### Evidence (V3.5 = `torcs_v3_physics_20261015-112700/`, V3.6 = `torcs_v3_physics_20261015-113645/`, both from ticks.csv, 0.02 s per tick)
+- **Why TRACK_MARGIN / EXTRA_CENTERING_GAIN are not the lever:** `TRACK_MARGIN` = 0.70 only adds centering when |trackPos| > 0.70. During the steering ramp (3249–3264 m) |trackPos| is ≤ 0.57, so the term is inactive. At T11 the steer is already 1.0 (raw also clipped at 1.0) from 3264.3 m in V3.6 and 3265.3 m in V3.5, before |trackPos| reaches 0.70 (3280 m in V3.5). A lower margin or higher gain can only change a raw value that is already clipped, so it cannot change the line there.
+- **Timing of steering saturation matters:** V3.6 reached steer 1.0 at 3263.9 m with trackPos +0.167; V3.5 at 3265.3 m with +0.111. V3.6 peak |trackPos| was 0.761 against 0.891. Entry speed at 3250 m was also lower in V3.6 (88.6 vs 91.3 km/h), so the two effects are mixed and cannot be separated from this data.
+- **V3.6 apex speed barely changed:** minimum speed in 3250–3300 m 61.8 km/h (V3.5: 61.1). V3.6 lost time before T11, not at it: per 200 m (V3.6 − V3.5) +0.22 s at 2600–2800, +0.46 s at 2800–3000, +0.73 s at 3000–3200, −0.04 s at 3200–3400, and +0.02 to +0.15 s on every earlier 200 m segment. First logged speed in the 3140–3200 m bin: 128.7 km/h in V3.6 against 179.7 km/h in V3.5, i.e. V3.6 was already much slower on the approach. The cause of that slower approach is not shown by the log (side rays are not logged); lowering the floor is the only intended change, so it is the likely cause. The 3.1 s lap loss is therefore not paid back at the apex, which is why V3.6 is a REVERT.
+- **Filter lag at the ramp:** raw steer rises about 0.05 per tick through 3250–3264 m and the logged filtered steer trails raw by 0.02–0.08 (e.g. V3.5 3251.9 m: raw 0.39, steer 0.31). The low-pass lag is α/(1−α) ticks of raw change: 1.0 tick at 0.5, 0.43 ticks at 0.3.
+
+### Expected effect (hypothesis, not measured)
+- The steering lag during the ramp falls from ~1.0 tick to ~0.43 tick (≈0.57 tick ≈ 0.6 m at ~80 km/h), so steer reaches 1.0 slightly earlier. This is a small change: it may lower the T11 peak |trackPos| a little from 0.891, but should not be expected to reach V3.6's 0.761. The size of the raw ramp is set by `angle` and the aim rays, not by the filter.
+- Lap time: corner speed and braking are unchanged from V3.5, so the lap time is expected near 1:42.592 (no gain claimed). With less smoothing on straights, slightly more weaving is possible (rms steer on 1800–2200 m: 0.152 in V3.5, 0.141 in V3.6; the V3.6 value is lower, but that run also had a different speed profile).
+
+### Risk and decision rule
+- Low–medium: less filtering on straights. **Revert STEER_SMOOTH to 0.5 if damage > 0, or if lap > 1:42.592 and T11 peak |trackPos| is not below 0.85.** Keep if damage 0 and (lap ≤ 1:42.592 or peak |trackPos| ≤ 0.85 with loss < 0.3 s).
+- Result of V3.7: *not run yet — no lap time or damage claimed.*
+
+---
+
 ## [V3.6] — Lower V_CORNER_MIN to remove throttle in the saturated-steer part of Turn 11
+
+**Result:** lap **1:45.684**, damage **0.0**, max speed 201.4 km/h, max |trackPos| **0.761**, offtrack 0 (`telemetry/torcs_v3_physics_20261015-113645/`) — **REVERT**. 3.092 s slower than V3.5 (1:42.592). The T11 peak |trackPos| fell 0.891 → 0.761, but the lap loss is 3.1 s and the apex speed did not change (see V3.7 for the segment analysis). `V_CORNER_MIN` restored to 55.0 in V3.7.
 
 ### Changed (`src/torcs_v3_physics.py`)
 - `PARAMS["V_CORNER_MIN"]`: 55.0 → 50.0 km/h. Nothing else changed.

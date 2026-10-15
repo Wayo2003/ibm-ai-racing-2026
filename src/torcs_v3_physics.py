@@ -26,7 +26,7 @@ if "--selftest" not in _sys.argv:
 PARAMS = {
     # --- Enhancement 1: Target Speed & Braking Model ---
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
-    "V_CORNER_MIN": 50.0,    # Conservative corner speed (km/h)                    [V3.6: was 55.0]
+    "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.6 tried 50.0 -> REVERT]
     "V_CORNER_BONUS": 45.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.4: was 35.0]
     "BRAKE_DECEL": 8.5,      # Estimated braking deceleration capacity (m/s^2)     [V3.5: was 7.0]
     "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
@@ -39,7 +39,7 @@ PARAMS = {
     "STRAIGHT_STEER_AIM": 0.25,   # Reduced steer aim gain on straights to prevent weaving
     "STEER_LOCK": 0.366,          # Maximum steering lock angle in radians (TORCS car standard)
     "STEER_AIM_TOP_N": 3,         # Number of longest rays used in weighted-average aim  [V3.2]
-    "STEER_SMOOTH": 0.5,          # Low-pass coefficient for steering: steer = α*prev + (1-α)*raw [V3.2]
+    "STEER_SMOOTH": 0.3,          # Low-pass coefficient for steering: steer = α*prev + (1-α)*raw [V3.2; V3.7: was 0.5]
     # --- Enhancement 3: ABS, Traction Control, Throttle & Shifting ---
     "ABS_SLIP": 10.0,         # Slip threshold (km/h) where wheel speed < speedX before ABS intervenes
     "TC_SLIP": 2.0,           # Differential spin threshold (rad/s) between rear and front wheels

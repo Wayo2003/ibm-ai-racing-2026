@@ -1,0 +1,9 @@
+﻿V3.6 result: 1:45.684, 0 damage, max |trackPos| 0.761 (telemetry/torcs_v3_physics_20261015-113645). It is 3.1 s SLOWER than V3.5
+(1:42.592, max |trackPos| 0.891 at Turn 11 ~3287 m). Decision: REVERT V_CORNER_MIN to 55.0 (V3.5 value)
+and record V3.6 as REVERT in CHANGELOG.md.
+
+Then propose and apply ONE different change (V3.7) that increases the edge margin at Turn 11 WITHOUT
+lowering corner speed, based on the V3.5 and V3.6 telemetry: for example a lower TRACK_MARGIN or a higher
+EXTRA_CENTERING_GAIN so the car is pulled back from the edge earlier, or a smaller STEER_SMOOTH so the
+steering reacts faster at corner entry. Explain the evidence for the choice and the expected effect on
+lap time and on max |trackPos|. Run the self-test. Do not run the race or invent lap times.
