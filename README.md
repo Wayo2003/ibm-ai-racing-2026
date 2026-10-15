@@ -23,7 +23,7 @@ damage at zero and remaining fully on track.
 | `torcs_jm_par_V2_LOOKAHEAD.py` | V2 | **2:33.244** | 0 | 0 | standing start, measured today (`telemetry/torcs_jm_par_V2_LOOKAHEAD_20261015-102451/`) |
 | `torcs_v3_FINAL.py` | **V3.12** | **1:42.868** | 0 | 0 | standing start, max 202.7 km/h, recorded on video |
 
-> 📹 **Video demonstration:** VIDEO_URL
+> 📹 **Video demonstration:** https://youtu.be/crttMt2ngMw
 
 The final driver is **81 seconds (44 %)** faster than the baseline and **50 seconds (33 %)** faster than
 the previous V2 driver, with zero damage and zero off-track excursions.

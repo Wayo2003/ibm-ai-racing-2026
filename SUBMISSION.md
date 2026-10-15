@@ -9,7 +9,7 @@
 | **Name** | Alvaro Cunado |
 | **Project Members** | Solo |
 | **GitHub Link** | https://github.com/AlvaroCunado2003/ibm-ai-racing-2026 |
-| **Video Demonstration** | VIDEO_URL |
+| **Video Demonstration** | https://youtu.be/crttMt2ngMw |
 
 ---
 
