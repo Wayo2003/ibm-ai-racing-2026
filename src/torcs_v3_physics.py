@@ -26,10 +26,11 @@ if "--selftest" not in _sys.argv:
 PARAMS = {
     # --- Enhancement 1: Target Speed & Braking Model ---
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
-    "V_CORNER_SHARP": 60.0,  # Corner entry speed for 90-deg sharp corners (km/h)  [V3.2: was 70]
-    "V_CORNER_FAST": 140.0,  # Corner entry speed for shallow/fast bends (km/h)
+    "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.3]
+    "V_CORNER_BONUS": 35.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.3]
     "BRAKE_DECEL": 7.0,      # Estimated braking deceleration capacity (m/s^2)     [V3.2: was 9]
-    "STRAIGHT_DIST": 100.0,  # Lookahead distance threshold to classify road as straight (m)
+    "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
+    "STRAIGHT_DIST": 100.0,  # Lookahead distance above which steering uses the reduced aim gain (m)
     # --- Enhancement 2: Steering & Racing Line ---
     "STEER_AIM": 0.35,            # Weight factor for aim toward open road (weighted avg) [V3.2: was 1.0]
     "CENTERING_GAIN": 0.40,       # Base gain to center vehicle within track bounds
@@ -123,27 +124,32 @@ def get_aim_angle_rad(S):
     return weighted_angle
 
 
+_SENSOR_RANGE = 200.0  # TORCS range-finder maximum reading (m)
+
+
+def get_corner_speed_kmh(S):
+    """V3.3: V_CORNER_MIN plus a bonus only when BOTH +-30 deg rays are long.
+
+    Independent of the aim angle. The bonus scales with the shorter of the two
+    side rays (idx 4 = -30 deg, idx 14 = +30 deg) relative to the sensor range.
+    """
+    track = S.get("track", [0.0] * 19)
+    if not track or len(track) < 19:
+        return PARAMS["V_CORNER_MIN"]
+    openness = min(1.0, max(0.0, min(track[4], track[14]) / _SENSOR_RANGE))
+    return PARAMS["V_CORNER_MIN"] + PARAMS["V_CORNER_BONUS"] * openness
+
+
 def calculate_target_speed(S):
     """ENHANCEMENT 1: Physics-based target speed (braking-distance model).
 
     Uses the robust (rolling-minimum) free distance so that a single long spike
     in the sensor reading cannot prematurely release braking.
+
+    V3.3: no straight-line bypass; the 200 m sensor range caps the speed.
     """
     d = get_free_distance_ahead(S)
-
-    # Long straightaway ahead
-    if d >= PARAMS["STRAIGHT_DIST"]:
-        return PARAMS["V_MAX"]
-
-    # Corner sharpness: 0.0 (straight ahead) to 1.0 (90 deg perpendicular)
-    aim_angle_rad = get_aim_angle_rad(S)
-    aim_angle_deg = math.degrees(aim_angle_rad)
-    sharpness = min(1.0, abs(aim_angle_deg) / 90.0)
-
-    # Interpolate corner speed based on estimated turn sharpness
-    v_corner_kmh = PARAMS["V_CORNER_FAST"] - sharpness * (
-        PARAMS["V_CORNER_FAST"] - PARAMS["V_CORNER_SHARP"]
-    )
+    v_corner_kmh = get_corner_speed_kmh(S)
 
     # Convert to m/s for kinematic braking calculation: v^2 = v_0^2 + 2 * a * d
     v_corner_ms = v_corner_kmh / 3.6
@@ -210,10 +216,8 @@ def calculate_steering(S):
 def calculate_throttle_and_brake(S, steer, target_speed):
     """ENHANCEMENT 3 + V3.2: ABS, traction control, and smooth throttle control.
 
-    V3.2 changes:
-      - Full brake (1.0) when the instantaneous required deceleration exceeds
-        BRAKE_DECEL — this fires early enough to shed speed before the corner.
-      - ABS still modulates brake pressure during wheel lock.
+    V3.3: brake = clip((speed - target) / BRAKE_RANGE, 0, 1) (replaces the V3.2
+    offset formula and the full-brake rule). ABS still modulates brake pressure.
     """
     speed = S.get("speedX", 0.0)
     diff = target_speed - speed
@@ -225,19 +229,7 @@ def calculate_throttle_and_brake(S, steer, target_speed):
         accel, brake = diff / 10.0, 0.0
     else:
         accel = 0.0
-        brake = min(1.0, max(0.0, (-diff / 25.0) + 0.1))
-
-    # V3.2: full brake when required deceleration exceeds BRAKE_DECEL capacity.
-    # Required decel (m/s^2) to reach target from current speed:
-    #   a_req = (v_current^2 - v_target^2) / (2 * d)
-    # We approximate: just use the speed excess vs target converted to m/s.
-    # A simpler and sufficient trigger: if speed (m/s) exceeds target (m/s) by
-    # more than what BRAKE_DECEL can handle in one second, apply full brake.
-    speed_ms = speed / 3.6
-    target_ms = target_speed / 3.6
-    if speed_ms > target_ms and (speed_ms - target_ms) > PARAMS["BRAKE_DECEL"] * 0.5:
-        brake = 1.0
-        accel = 0.0
+        brake = min(1.0, max(0.0, -diff / PARAMS["BRAKE_RANGE"]))
 
     # Low speed launch guarantee
     if speed < 5.0:
@@ -496,6 +488,28 @@ def _run_selftest():
         s_noisy < 0.5,
         s_noisy,
     )
+
+    # --- Case 6 (V3.3): wall 15 m ahead at 105 km/h must brake ----------------
+    # Hairpin scenario from the V3.2 crash: only the forward rays see the wall,
+    # side rays at +-30 deg are short, so V_CORNER = V_CORNER_MIN.
+    _reset_state()
+    wall_track = [15.0] * 19
+    wall_track[15] = 20.0   # slightly longer ray to the right (open road ~45 deg)
+    S = _make_state(wall_track, angle=0.0, trackPos=0.0, speedX=105.0)
+    # Rolling wheels (no slip) so ABS does not cut the brake: omega = v / r
+    S["wheelSpinVel"] = [105.0 / 3.6 / PARAMS["WHEEL_RADIUS"]] * 4
+    for _ in range(PARAMS["FREE_DIST_MEMORY"]):
+        steer = calculate_steering(S)
+    target = calculate_target_speed(S)
+    accel, brake = calculate_throttle_and_brake(S, steer, target)
+    print(f"  (target={target:.1f} km/h, accel={accel:.2f}, brake={brake:.2f})")
+    check("Wall 15 m ahead at 105 km/h → brake > 0", brake > 0.0, steer)
+
+    # --- Case 7 (V3.3): no straight bypass; 200 m of road at 230 km/h must brake
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=230.0)
+    target = calculate_target_speed(S)
+    check(f"200 m free at 230 km/h → target < V_MAX (target={target:.1f})", target < PARAMS["V_MAX"], 0.0)
 
     print()
     if failures == 0:

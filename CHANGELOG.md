@@ -1,9 +1,58 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to the IBM AI Racing 2026 driver are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
+
+## [V3.3] — Target-speed model without straight bypass, conservative V_CORNER, proportional brake
+
+### Crash evidence (V3.2, race 2, same hairpin)
+Telemetry `telemetry/torcs_v3_physics_20261015-105228/ticks.csv` (only `track9` is logged, not the other rays):
+- First damage at **step 3315**, distFromStart **2468.2 m**, curLapTime **67.68 s**; speed **95.1 → 17.3 km/h** in one tick, damage **214**.
+- Steps **3255–3303**: `brake` > 0 in only **1 of 49 ticks** (0.12 at step 3255), mean `accel` ≈ **0.18**, while `track9` fell
+  **19.6 m → 0.3 m** and speed only fell **116.6 → 97.5 km/h**. Steering was saturated at 1.0 from step 3276, with `trackPos`
+  going 0.46 → −1.0 and `angle` 0.11 → 0.46 rad: the car ran wide because it was too fast for the radius.
+- Steering is no longer the problem (no bang-bang).
+
+### Diagnosis review
+- **(a) V_CORNER too high, so target > speed: CONFIRMED (mechanism), numbers differ.**
+  Back-solving the V3.2 throttle (`accel = (target − speed)/10`, undoing the cornering lift) in steps 3256–3300 gives
+  `target ≈ speed + 0…4 km/h` and an implied **V_CORNER ≈ 96–100 km/h** (not 120–125). That corresponds to an aim angle of
+  about 45–50° at those ticks (inside the bend), not 15–20°. The aim angle at corner entry cannot be checked because the
+  CSV has no side rays. Either way, `target` stayed just above `speed` all the way to the wall, so the brake was never released
+  into the `diff <= 0` branch. With V_CORNER = 55 km/h the same ticks give target ≈ 81 km/h at d = 19.6 m (116 km/h → excess 35 km/h → brake 1.0).
+- **(b) STRAIGHT_DIST bypass physically unsafe: CONFIRMED as physics, REFUTED as the cause of THIS crash.**
+  Stopping 230 → 55 km/h at 7 m/s²: (63.9² − 15.3²)/(2·7) ≈ **275 m**, more than the 200 m sensor range. But in the final approach
+  (steps 3145–3315) `track9` never exceeded **94.3 m** (the bypass uses max of rays 8–10, so this is indicative, not proof), so it was most likely not active; the car arrived at 128–144 km/h (peak of the
+  segment 2900–3100: 160.7 km/h; lap peak 205.9 km/h at step 2443, dist 1792 m). The bypass is still a latent
+  hazard on the faster approaches, so it was removed as requested.
+
+### Changed (`src/torcs_v3_physics.py`)
+1. **Target speed**: STRAIGHT_DIST bypass removed; always
+   `v_target = min(V_MAX, sqrt(V_CORNER² + 2·BRAKE_DECEL·d))`. `STRAIGHT_DIST` now only selects the steering aim gain.
+   The 200 m sensor range caps the top speed (≈ 198 km/h with V_CORNER = 55, ≈ 211 km/h with the full bonus).
+2. **V_CORNER** = `V_CORNER_MIN` + `V_CORNER_BONUS · clip(min(track[4], track[14]) / 200, 0, 1)` (rays at −30° and +30°);
+   independent of the aim angle. The bonus is continuous and only large when BOTH side rays are long. Removed `V_CORNER_SHARP`, `V_CORNER_FAST`.
+3. **Brake** = `clip((speed − target) / BRAKE_RANGE, 0, 1)` (BRAKE_RANGE = 15 km/h); replaces the V3.2 `-diff/25 + 0.1`
+   formula and the “full brake if excess > BRAKE_DECEL·0.5 m/s” rule. ABS unchanged.
+
+### Added (PARAMS)
+- `V_CORNER_MIN = 55.0` km/h, `V_CORNER_BONUS = 35.0` km/h, `BRAKE_RANGE = 15.0` km/h.
+
+### Added (self-test)
+- **Case 6**: wall 15 m ahead at 105 km/h (rolling wheels, so ABS does not cut it) → brake > 0 (result: target 77.7 km/h, brake 1.00).
+- **Case 7**: 200 m free at 230 km/h → target < V_MAX (210.7 km/h in this case, with full bonus).
+- `python src/torcs_v3_physics.py --selftest` → all 7 cases pass.
+
+### Notes / risks (not verified in a race)
+- No race was run for V3.3; no lap times are claimed.
+- The 200 m cap and V_CORNER_MIN = 55 will likely lower straight speed and lap time; BRAKE_DECEL = 7 m/s² is an estimate, not measured.
+- `shift_gears(braking=brake > 0)` will now trigger on any speed excess, so downshifts happen more often.
+
+---
+
+
 
 ## [V3.2] — Crash-prevention: smooth steering, robust braking, braking downshift
 

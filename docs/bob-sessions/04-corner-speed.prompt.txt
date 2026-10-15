@@ -1,0 +1,22 @@
+﻿Second race (V3.2) crashed again in the SAME corner: damage 214 at distFromStart ~2468 m, 67.7 s.
+Telemetry: telemetry/torcs_v3_physics_20261015-105228/ticks.csv. Steering no longer oscillates (good), but steps 3255-3303 show
+the car NOT braking (brake 0.0, accel ~0.2) while track9 falls from 19.6 m to 2 m at ~100-117 km/h.
+
+Read the data and confirm or refute this diagnosis:
+ (a) V_CORNER is derived from the weighted aim angle; seen from the entry, this hairpin's open road is
+     only ~15-20 deg off-axis, so V_CORNER comes out ~120-125 km/h and the target speed stays above
+     the actual speed: no braking.
+ (b) The STRAIGHT_DIST bypass (target = V_MAX when d >= 100 m) is physically unsafe: the range sensors
+     see at most 200 m, and stopping from 230 km/h to a hairpin speed at 7 m/s^2 needs ~280 m.
+
+Make V3.3 with the smallest changes:
+ 1. Remove the STRAIGHT_DIST bypass from the target-speed model: always use
+    v_target = min(V_MAX, sqrt(V_CORNER^2 + 2 * BRAKE_DECEL * d)). (Keep STRAIGHT_DIST only for the
+    steering gain.) The 200 m sensor range then caps the safe top speed automatically.
+ 2. Make V_CORNER conservative and independent of the misleading aim angle: V_CORNER = V_CORNER_MIN
+    (new PARAM, 55 km/h) plus a bonus only when BOTH side rays at +-30 deg are long (wide-open bend):
+    up to V_CORNER_BONUS (new PARAM, 35 km/h). Remove V_CORNER_SHARP / V_CORNER_FAST.
+ 3. Brake proportionally to the speed excess: brake = clip((speed - target) / BRAKE_RANGE, 0, 1) with
+    BRAKE_RANGE 15 km/h, still subject to ABS.
+Update the self-test (add: wall 15 m ahead at 105 km/h must produce brake > 0) and run it.
+Append V3.3 to CHANGELOG.md with the evidence. Do not run the race or invent lap times.
