@@ -1,0 +1,4 @@
+﻿course-materials/
+__pycache__/
+telemetry/*/ticks.csv
+
