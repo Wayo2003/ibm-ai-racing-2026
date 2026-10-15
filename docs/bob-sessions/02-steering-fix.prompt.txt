@@ -1,0 +1,17 @@
+﻿Code review of src/torcs_v3_physics.py before the first race. I found a sign-convention bug in
+calculate_steering(): in TORCS/SCR, positive track sensor angles point to the RIGHT of the car
+(the reference SimpleDriver reads track[10] = +5 deg as the right-side sensor and track[8] = -5 deg
+as the left-side sensor), while a positive steer value turns LEFT (steer = +1 full left). The
+current formula ADDS aim_angle_rad, so when the open road is on the right the car steers left,
+away from the corner exit, which would hit the wall and cause damage.
+
+1. Confirm or refute this by reading the comments/sensor documentation in src/snakeoil3_gym_BASELINE.py
+   and the V2 steering (angle and trackPos signs). Distinguish what the code proves from assumptions.
+2. If confirmed, make the smallest fix: subtract the aim term
+   (steer = (angle - aim_gain * aim_angle_rad - centering) / STEER_LOCK) and update the docstring.
+   Change nothing else.
+3. Add a small self-test at the bottom of the file, run only with `python src/torcs_v3_physics.py --selftest`,
+   that feeds synthetic sensor dicts (open road on the right, open road on the left, car on the left
+   edge, car on the right edge) and asserts the steering sign is correct in each case. Run it.
+4. Create CHANGELOG.md with an entry for V3.0 (initial physics driver) and V3.1 (this steering sign
+   fix, found in human code review before the first race). Do not run the race or invent lap times.
