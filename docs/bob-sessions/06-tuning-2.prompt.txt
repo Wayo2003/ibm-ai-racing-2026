@@ -1,0 +1,9 @@
+﻿I ran src/torcs_v3_physics.py on Corkscrew. The telemetry is in telemetry/torcs_v3_physics_20261015-111942/ (laps.csv
+and ticks.csv). Read them. Report the lap time and damage, and find the ONE section of the track
+(distFromStart range) that costs the most time or comes closest to damage (low speed vs. long
+free distance, |trackPos| near 1, heavy braking, damage increase). Distinguish observations from
+hypotheses. Propose ONE parameter change in PARAMS with its expected effect and risk, apply only
+that change, append the run to CHANGELOG.md (version, change, lap time, damage, keep/revert), and
+show the diff. Do not invent measurements.
+
+History (all clean, 0 damage): V3.3 1:52.336 -> V3.4 (V_CORNER_BONUS 35->45) 1:47.106 = KEEP. Record V3.4 as KEEP in CHANGELOG.md. The hairpin at distFromStart ~2468 m caused both earlier crashes: keep a margin there. Compare this run's ticks.csv with the V3.3 run to see where the 5.2 s were gained, then propose the next single change with the best gain/risk.

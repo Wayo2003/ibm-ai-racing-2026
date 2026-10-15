@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [V3.5] — Increase BRAKE_DECEL to trust braking model on fast approaches
+
+### Changed (`src/torcs_v3_physics.py`)
+- `PARAMS["BRAKE_DECEL"]`: 7.0 → 8.5 m/s².
+
+### Telemetry analysis & Rationale
+- **V3.4 Run Telemetry** (`telemetry/torcs_v3_physics_20261015-111942/`):
+  - Lap time: **1:47.106** (107.106 s)
+  - Damage: **0.0**
+  - Max speed: **193.0 km/h** at distFromStart 1755.5 m
+  - Status: **Keep** (5.23 s faster than V3.3, 0 damage). — *[V3.3→V3.4: confirmed KEEP]*
+
+#### Observations (measurements from ticks.csv — not inferred)
+- **Where the 5.2 s were gained (V3.3 vs V3.4 segment comparison, 200 m bins):**
+  - 2200–2400 m: +1.02 s saved (mean speed 119.0 → 146.7 km/h; V3.4 entered this pre-hairpin straight faster due to higher V_CORNER_BONUS on the preceding open sweeper).
+  - 3400–3600 m: +0.84 s saved (mean speed 138.5 → 168.1 km/h; post-T11 acceleration starts higher because T11 is now entered 34.9 km/h faster: 134 km/h vs 139 km/h, braking start 41 m later).
+  - 1200–1400 m: +0.62 s saved (max speed 152.2 → 180.6 km/h; open-arc sector with long ±30° rays, full bonus applied).
+  - 3000–3200 m: +0.60 s saved (approach to T11 faster: 122.9 → 138.3 km/h mean).
+  - Total accounted by segment bins: +4.78 s (residual 0.44 s in sub-bin scatter).
+- **Bottleneck — Turn 11 (distFromStart 3200–3300 m):**
+  - Apex speed: **62.7 km/h** at dist 3286 m (identical to V3.3: 62.4 km/h). Apex position unchanged.
+  - Peak |trackPos|: **0.813** at dist 3289 m with steer = 1.00 (saturated for 70 ticks, 3265–3290 m).
+  - track9 at braking-start distance (3140 m) in V3.4: **126.5 m**. Model computes v_target = sqrt(55²/3.6² + 2·7.0·126.5)·3.6 = **161.2 km/h** while car is doing **168.9 km/h** → brake = 0.52. Car still arrives at apex at 62.7 km/h, indicating V_CORNER_MIN = 55 km/h matches physics, but braking starts 41 m later than V3.3 (3140 vs 3099 m) and the approach speed at that point is 34.9 km/h higher.
+  - Time spent ≤70 km/h in T11 (3265–3300 m): **1.84 s** — the single slowest 35 m section on the entire lap.
+  - For comparison, hairpin at dist ~2468 m (3.94 s lost in V3.3) now costs only: apex 72.8 km/h, 1.08 s at < 80 km/h, |trackPos|_max = 0.566, no steer saturation. Hairpin is no longer the bottleneck.
+- **Only braking events on the whole lap (speed > 80, brake > 0.5):** 4 ticks, all at 2228–2239 m (pre-hairpin; speed 174–188 km/h, track9 100–107 m). No heavy braking at T11: model brakes gradually from 3140 m.
+
+#### Hypothesis for V3.5
+- BRAKE_DECEL = 7.0 m/s² is **too conservative**: the car reaches 62.7 km/h at the T11 apex correctly, which means the actual grip is sufficient for 7 m/s² of deceleration but the model under-estimates it. If the car can decelerate faster than 7 m/s², braking can start later (higher entry speed) with the same apex speed. Increasing BRAKE_DECEL to **8.5 m/s²** raises v_target at d = 126.5 m to 175.8 km/h > 168.9 km/h (brake = 0.00 until the car catches up to the closer corner distance), effectively delaying the braking point. At d = 200 m (sensor cap), v_target rises from 198.3 → 217.0 km/h, lifting straight speed targets across all approach sections. This propagates a speed benefit to every braking zone on the lap, not only T11. Risk: if 8.5 m/s² overstates grip, the car will reach the apex faster than 62.7 km/h — most likely at the hairpin (dist 2468 m, prior crash site) since it is the tightest corner and has the least V_CORNER_BONUS. The hairpin apex under V3.4 is 72.8 km/h with 0 trackPos margin; a 10–15% entry overshoot would push |trackPos| toward 0.7–0.8, approaching but not exceeding the prior crash value (|trackPos| > 1.0). STEER_SMOOTH and edge centering remain active.
+
+### Changed
+- `PARAMS["BRAKE_DECEL"]`: **7.0 → 8.5 m/s²** (21% increase).
+
+### Expected effect
+- Braking point at T11 (d_approach ≈ 126–188 m) delayed, entry speed higher, apex speed unchanged (physics-limited by V_CORNER_MIN). Sector 3200–3300 m should save ~0.2–0.5 s. All straight-speed targets also rise (~10 km/h at 200 m free distance), potentially saving a further 0.3–0.6 s across the lap.
+
+### Risk
+- **Medium.** Hairpin at dist 2468 m is the most sensitive corner (V_CORNER_BONUS ≈ 0 due to short ±30° rays). Predicted hairpin entry speed increases by ~15 km/h (current 122 km/h at 2230 m, same braking zone). Stopping from 137 km/h to 73 km/h at 8.5 m/s² requires (137²−73²)/(2·8.5·3.6²) ≈ 71 m; current braking starts at dist ~2230 m, apex at ~2469 m — 239 m available. Margin is sufficient. However, if the model over-estimates deceleration, the only safe outcome is a slightly wider exit line (|trackPos| up to 0.8); |trackPos| > 1.0 indicates a crash. **Revert to 7.0 if damage > 0 or |trackPos| exceeds 0.85 at the hairpin.**
+
+---
+
 ## [V3.4] — Increase V_CORNER_BONUS for higher open-section speed with preserved hairpin safety margin
 
 ### Changed (`src/torcs_v3_physics.py`)

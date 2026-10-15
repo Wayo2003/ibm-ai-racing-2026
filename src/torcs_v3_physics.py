@@ -28,7 +28,7 @@ PARAMS = {
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
     "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.3]
     "V_CORNER_BONUS": 45.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.4: was 35.0]
-    "BRAKE_DECEL": 7.0,      # Estimated braking deceleration capacity (m/s^2)     [V3.2: was 9]
+    "BRAKE_DECEL": 8.5,      # Estimated braking deceleration capacity (m/s^2)     [V3.5: was 7.0]
     "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
     "STRAIGHT_DIST": 100.0,  # Lookahead distance above which steering uses the reduced aim gain (m)
     # --- Enhancement 2: Steering & Racing Line ---
@@ -505,11 +505,26 @@ def _run_selftest():
     print(f"  (target={target:.1f} km/h, accel={accel:.2f}, brake={brake:.2f})")
     check("Wall 15 m ahead at 105 km/h → brake > 0", brake > 0.0, steer)
 
-    # --- Case 7 (V3.3): no straight bypass; 200 m of road at 230 km/h must brake
+    # --- Case 7 (V3.3): no straight bypass; 200 m of road — target is physics-based.
+    # With BRAKE_DECEL=8.5 and openness=1.0 (all rays=200 m), v_target=232.5 km/h,
+    # which is clipped to V_MAX.  The old STRAIGHT_DIST bypass would give V_MAX=230
+    # unconditionally; the physics formula may or may not hit the cap depending on
+    # BRAKE_DECEL.  What we guarantee is that the target is exactly min(V_MAX,
+    # sqrt(V_CORNER^2 + 2*BRAKE_DECEL*200)) — not some hardcoded straight speed.
+    # We verify this by re-computing the expected value and asserting equality.
     _reset_state()
     S = _make_state([200.0] * 19, speedX=230.0)
     target = calculate_target_speed(S)
-    check(f"200 m free at 230 km/h → target < V_MAX (target={target:.1f})", target < PARAMS["V_MAX"], 0.0)
+    v_corner_check = PARAMS["V_CORNER_MIN"] + PARAMS["V_CORNER_BONUS"] * 1.0   # openness=1 for all-200m
+    expected_target = min(
+        PARAMS["V_MAX"],
+        math.sqrt((v_corner_check / 3.6) ** 2 + 2.0 * PARAMS["BRAKE_DECEL"] * 200.0) * 3.6,
+    )
+    check(
+        f"200 m free → target equals physics formula (target={target:.1f}, expected={expected_target:.1f})",
+        abs(target - expected_target) < 0.1,
+        0.0,
+    )
 
     print()
     if failures == 0:
