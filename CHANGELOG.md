@@ -5,7 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [V3.6] — Lower V_CORNER_MIN to remove throttle in the saturated-steer part of Turn 11
+
+### Changed (`src/torcs_v3_physics.py`)
+- `PARAMS["V_CORNER_MIN"]`: 55.0 → 50.0 km/h. Nothing else changed.
+
+### V3.5 result (`telemetry/torcs_v3_physics_20261015-112700/`)
+- Lap time: **1:42.592** (102.592 s) — 4.514 s faster than V3.4 (1:47.106)
+- Damage: **0.0**, offtrack events: **0**, max speed **203.0 km/h** (distFromStart 1769.6 m)
+- Status: **KEEP**. — *[V3.4→V3.5: confirmed KEEP]*
+
+#### Observations (from ticks.csv; V3.4 = `torcs_v3_physics_20261015-111942/`; track width in metres is not logged, so margins are in trackPos units only)
+- **Where the gain came from:** 100 m bins gained 0.08–0.20 s each on 33 of 37 bins (sum 4.51 s). The tight-corner bins did not: 2400–2500 m −0.02 s, 2500–2600 m −0.07 s, 3200–3300 m +0.04 s, 3300–3400 m −0.09 s (negative = slower than V3.4).
+- **Closest call to damage — Turn 11, 3200–3300 m:** peak |trackPos| **0.891** at 3287.1 m (V3.4: 0.813); margin to edge 0.109. Speed there 61.5 km/h, track9 5.1 m minimum (3283.9 m), steer ≥ 0.99 for 72 ticks, 29 ticks with |trackPos| > 0.8 (V3.4: 9). The 100 m bin took 4.22 s (mean 87.4 km/h), the slowest non-start bin (bin 0–100 m, 4.31 s, is the standing start).
+- **Entry speed rose, apex speed did not:** speed at 3180 m 157.2 km/h (V3.4: 145.0); minimum 61.1 km/h (V3.4: 62.7). Mean brake over 3180–3249 m only 0.16 (max 0.24); measured mean deceleration over that stretch 8.9 m/s². Throttle stays > 0 (0.10–0.26) from 3260 m through the apex while the car loses speed 82 → 61 km/h.
+- **Hairpin ~2468 m:** speed 73.1 km/h and |trackPos| 0.35 at 2469 m, min track9 11.2 m; peak |trackPos| **0.740** at 2480.3 m (V3.4: 0.566), speed there 72.5 km/h; lowest speed in the hairpin zone 66.9 km/h at 2499.5 m. Entry speed at 2380 m 130.9 km/h (V3.4: 123.1). Steer ≥ 0.99 for 58 ticks. Brake in 2380–2560 m peaks at 0.28.
+- **Heaviest braking of the lap is NOT at the hairpin:** only 2 ticks with brake ≥ 0.5, at 2230.9–2232.0 m (brake 1.0/0.97, 194.3 km/h, track9 ≈ 106 m), about 237 m before the hairpin. Speed fell 194.3 → 181.7 km/h by 2239 m.
+- The steering command is saturated (1.0) at both corners while |trackPos| grows, so steering terms (TRACK_MARGIN, EXTRA_CENTERING_GAIN, STEER_SMOOTH) cannot add more correction there.
+- Model check (side rays are not logged, so openness is unknown): with V_CORNER_MIN = 55, BRAKE_DECEL = 8.5, d = 13.7 m (track9 at 3266.2 m) and openness 0 the formula gives a target of 77.7 km/h, against a logged speed of 76.4 km/h and accel 0.19 (steer 1.0). Target slightly above speed is consistent with the logged small positive throttle.
+
+#### Hypotheses (not measured)
+- BRAKE_DECEL = 8.5 does not overstate straight-line braking (0 damage) but lets the car arrive faster at tight corners, where the car is steering-limited; the extra width (0.813 → 0.891, 0.566 → 0.740) is the symptom. Without lateral velocity or slip in the log this cannot be confirmed.
+- Throttle applied while the steering is saturated (accel 0.10–0.26 from 3260 to 3285 m) may limit the lateral grip available for turning; the log has no lateral acceleration or slip, so this is unconfirmed.
+- The V3.5 entry said "revert if |trackPos| exceeds 0.85 at the hairpin": the hairpin stayed at 0.74 (not triggered). The 0.891 occurred at T11, outside that criterion, but it is the smallest margin seen in V3.3–V3.5 and is why V3.6 is proposed. The predicted T11 gain of 0.2–0.5 s did not occur (≈ −0.05 s net over 3200–3400 m).
+
+### Expected effect
+- Computed from the model at d = 13.7 m, openness 0: target falls 77.7 → 74.3 km/h. At 76.4 km/h the car would then be slightly above target and would brake lightly instead of applying 0.19 throttle. Expected (hypothesis): apex speed a few km/h lower, T11 peak |trackPos| below 0.891, cost 0.05–0.15 s per tight corner. The bonus term is unchanged, so open sections only see the −5 km/h floor shift.
+
+### Risk
+- **Low.** It costs lap time if the T11 line does not improve. **Revert to 55.0 if damage > 0, or if the lap is slower than 1:42.592 and the T11 peak |trackPos| is not below 0.85.** Keep if damage is 0 and either the lap is ≤ 1:42.592 or the T11 peak |trackPos| ≤ 0.85 with lap loss < 0.3 s.
+- Result of V3.6: *not run yet — no lap time or damage claimed.*
+
+---
+
 ## [V3.5] — Increase BRAKE_DECEL to trust braking model on fast approaches
+
+**Result:** lap **1:42.592**, damage **0.0**, max 203.0 km/h (`telemetry/torcs_v3_physics_20261015-112700/`) — **KEEP**.
 
 ### Changed (`src/torcs_v3_physics.py`)
 - `PARAMS["BRAKE_DECEL"]`: 7.0 → 8.5 m/s².

@@ -26,7 +26,7 @@ if "--selftest" not in _sys.argv:
 PARAMS = {
     # --- Enhancement 1: Target Speed & Braking Model ---
     "V_MAX": 230.0,          # Max target speed on long straights (km/h)
-    "V_CORNER_MIN": 55.0,    # Conservative corner speed (km/h)                    [V3.3]
+    "V_CORNER_MIN": 50.0,    # Conservative corner speed (km/h)                    [V3.6: was 55.0]
     "V_CORNER_BONUS": 45.0,  # Max extra corner speed when both +-30 deg rays are long (km/h) [V3.4: was 35.0]
     "BRAKE_DECEL": 8.5,      # Estimated braking deceleration capacity (m/s^2)     [V3.5: was 7.0]
     "BRAKE_RANGE": 15.0,     # Speed excess (km/h) at which brake reaches 1.0      [V3.3]
