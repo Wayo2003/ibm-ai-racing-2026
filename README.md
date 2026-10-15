@@ -1,133 +1,240 @@
-# IBM Global AI Racing League 2026 — Solo Entry by Alvaro
+﻿# AI Racing League – Go Full Speed with IBM Bob · Corkscrew 1:42.868, zero damage
 
-> Autonomous racing agent for **TORCS** built for the IBM Global AI Racing League.
-> Circuit: **Corkscrew** · Car: `car1-trb1` (IBM / Granite livery) · Stack: Python + IBM Granite 4.0 (local via Ollama + Continue.dev)
-
----
-
-## Resultados
-
-| Intento | TARGET_SPEED | STEER_GAIN | CENTERING_GAIN | Freno | Mejor vuelta | Δ |
-|---------|--------------|------------|----------------|-------|--------------|---|
-| 1 (baseline) | 70 | 30 | 0.20 | 0.3 @ 0.9 rad | **03:04.55** | — |
-| 2 | 75 | 30 | 0.20 | 0.6 @ 0.5 rad | **02:55.03** | −9.52 s |
-| 3 | 75 | 35 | 0.30 | 0.6 @ 0.5 rad | **02:53.68** | −1.35 s |
-| **4 (V2 LOOKAHEAD final)** | **70–120 din.** | **35** | **0.40** | **progresivo** | **02:27.28** | **−26.40 s** |
-
-> **Mejora acumulada total:** −37.27 s (−20.20 %) · **Vuelta final entregable: 02:27.28**
+**Solo entry — Alvaro Cunado**
 
 ---
 
-## Enfoque técnico
+## Problem Statement
 
-Este agente no utiliza aprendizaje por refuerzo ni redes neuronales entrenadas. Está basado en una **política reactiva cuidadosamente ajustada** que lee los sensores de TORCS en cada frame y decide `steer`, `accel`, `brake` y `gear`. La filosofía es "entender primero la física, optimizar después": el objetivo fue conseguir un agente que complete vueltas limpias de forma consistente antes de intentar ir rápido.
-
-### Bucle de decisión
-
-1. **Lectura de sensores** — `angle`, `trackPos`, `speedX`, `rpm`, `wheelSpinVel`, y los 19 rayos de distancia `track[0..18]` que actúan como un LIDAR frontal.
-2. **Dirección** — combinación lineal del ángulo del coche respecto al eje de la pista y la desviación lateral para mantener el coche centrado.
-3. **Velocidad objetivo dinámica (V2)** — se calcula en cada tick a partir de la distancia frontal visible: mucho asfalto delante → acelerar hasta `MAX_SPEED`; poco asfalto → bajar hasta `MIN_SPEED`. La interpolación lineal entre ambos extremos es lo que permite pasar recta tras recta sin intervenir manualmente.
-4. **Frenado progresivo** — proporcional al exceso de velocidad sobre el objetivo, con freno de emergencia si detecta obstáculo a menos de 25 m.
-5. **Cambio de marchas con histéresis** — umbrales distintos para subir y bajar marcha según RPM, evitando oscilaciones cuando la velocidad ronda el umbral.
-6. **Control de tracción** — reduce gas si las ruedas traseras patinan respecto a las delanteras.
-7. **Recuperación automática** — si el coche se sale de pista (`|trackPos| > 1`), bloquea acelerador, frena y gira hacia el centro.
-
-### Uso de IBM Granite 4.0
-
-La competición exige uso del modelo Granite de IBM. En este proyecto Granite 4.0 350M se ejecuta **localmente vía Ollama** y se integra en VS Code mediante **Continue.dev**, actuando como copiloto durante el proceso iterativo de ajuste de parámetros. Granite se usa para:
-
-- Proponer alternativas cuando un cambio de parámetro degrada el tiempo.
-- Sugerir funciones auxiliares (como `get_curvature_hint()`) a partir de descripciones en lenguaje natural.
-- Explicar el comportamiento de sensores de TORCS que no están documentados.
-- Revisar el código antes de cada commit.
+The challenge is to write a Python AI driver for TORCS that sets the fastest possible lap on the Corkscrew
+track using only the 19 forward-arc distance sensors and vehicle-state telemetry provided by the SCR
+server — no image input, no map, no pre-recorded racing line.  The first baseline lap recorded in my earlier project with the reference driver
+(`src/torcs_jm_par_ORIGINAL.py` family), 3:04.55, demonstrates the gap between a rule-of-thumb heuristic
+controller and what physics-informed control can achieve.  The goal is to close that gap while keeping
+damage at zero and remaining fully on track.
 
 ---
 
-## Estructura del repositorio
+## Headline Results
+
+| Driver | Version | Lap time | Damage | Off-track | Notes |
+|--------|---------|----------|--------|-----------|-------|
+| `torcs_jm_par_ORIGINAL.py` | Baseline | **3:04.55** | 0 | — | recorded in earlier project |
+| `torcs_jm_par_V2_LOOKAHEAD.py` | V2 | **2:33.244** | 0 | 0 | standing start, measured today (`telemetry/torcs_jm_par_V2_LOOKAHEAD_20261015-102451/`) |
+| `torcs_v3_FINAL.py` | **V3.12** | **1:42.868** | 0 | 0 | standing start, max 202.7 km/h, recorded on video |
+
+> 📹 **Video demonstration:** VIDEO_URL
+
+The final driver is **81 seconds (44 %)** faster than the baseline and **50 seconds (33 %)** faster than
+the previous V2 driver, with zero damage and zero off-track excursions.
+
+---
+
+## The Three Enhancements
+
+### Enhancement 1 — Physics-based braking-distance target speed
+
+**What it does.** On every control tick the driver reads the maximum of the three forward distance sensors
+(`track[8]`, `track[9]`, `track[10]`) as the free distance `d` ahead and the openness of both ±30° side
+rays to estimate how sharp the upcoming corner is.  It then computes:
 
 ```
-.
-├── README.md                         Este archivo
-├── src/
-│   ├── torcs_jm_par.py               Agente V1 (baseline ajustado, 2:53.68)
-│   └── torcs_jm_par_V2_LOOKAHEAD.py  Agente V2 con lookahead dinámico
-├── docs/
-│   ├── Informe_Tecnico.docx          Documento técnico completo
-│   └── Bitacora_TORCS_IBM_Racing.xlsx  Bitácora de experimentos
-├── media/
-│   ├── fastest_lap.mp4               Vídeo de vuelta rápida (entregable)
-│   └── team_video.mp4                Vídeo de equipo (entregable)
-└── livery/
-    └── car1-trb1_custom.rgb          Livery personalizada IBM/Granite
+v_target = min(V_MAX, sqrt(V_CORNER² + 2 · BRAKE_DECEL · d))
 ```
+
+where `V_CORNER` is a floor speed (55 km/h) plus a bonus (up to 45 km/h) when both side rays are long —
+a wide open bend.  Brake pressure is proportional to the speed excess over this target.
+
+**Why it matters.** The V2 driver used a fixed speed cap and braked conservatively on every bend.  The
+kinematic model lets the car carry full speed on open sections and only brakes where physics dictate it
+must slow down to reach the apex at the target speed.  The result is dramatically higher straight-line
+speed (203 km/h vs 113 km/h for V2) and precise corner entry.
+
+### Enhancement 2 — Racing-line steering with smooth aim
+
+**What it does.** Instead of tracking the centreline, the driver aims toward the corner exit: it computes
+a distance-weighted average of the three longest track-sensor rays and steers toward that direction.  The
+aim contribution is blended in linearly as the car approaches a corner (active only when `d < 100 m`) and
+fades to zero on open straights.  A small dead-band suppresses micro-corrections.  A low-pass filter
+(`steer = 0.5·prev + 0.5·raw`) prevents single noisy sensor ticks from reversing the steering command.
+
+**Why it matters.** Two early crashes and a later repeatability failure were all caused by bang-bang steering
+oscillation: the unfiltered single-longest-ray selector jumped between adjacent sensors every few ticks and
+saturated the steering output.  The smooth, blended aim greatly reduces the oscillation (steering sign changes fell from roughly 430 to 161 per lap in V3.12) while still enabling the
+car to rotate toward the corner exit.
+
+### Enhancement 3 — ABS, traction control and speed-based gear selection
+
+**What it does.**
+- **ABS:** if wheel speed falls more than `ABS_SLIP` km/h below vehicle speed under braking, brake pressure
+  is reduced proportionally (no lockup).
+- **Traction control:** if rear wheels spin faster than the fronts by more than `TC_SLIP`, throttle is cut
+  proportionally.
+- **Speed-based gear selection:** on each eligible tick the driver selects the lowest gear in [2..6] whose
+  engine rpm at the current road speed is ≤ `SHIFT_HIGH_RPM` (9 000 rpm), keeping the engine high in its
+  power band.  A gear-1 launch rule fires while `speedX < 10 km/h`.
+
+**Why it matters.** RPM-threshold shifting failed badly in two independent ways: the V3.2 invented gear
+table caused 2–4 gear drops under any light braking (gear 6 → 2 at 100 km/h), and the V3.10 highest-gear
+rule short-shifted the engine to 5 500 rpm on every corner exit, costing acceleration.  Speed-based
+selection with a measured gear table (from telemetry) solves both problems.
 
 ---
 
-## Instalación rápida
+## How IBM Bob Was Used
 
-### Requisitos
+### The iterative loop
 
-- Windows 10/11, macOS o Linux
-- Python 3.10+ (probado en 3.14.3)
-- TORCS + SCR patch (entregados por IBM en `TORCSdownload.zip`)
-- 4 GB RAM, 3 GB de disco
+```
+Bob prompt (read files + hypothesis) → Bob proposes code change
+   → human code review → apply to src/torcs_v3_physics.py
+   → race on TORCS Corkscrew → read telemetry/*/laps.csv + ticks.csv
+   → Bob reads new telemetry → next prompt
+```
 
-### Pasos
+Every version was proposed by Bob after reading the actual telemetry from the previous run.  Bob never
+ran the simulator; the human ran each race and fed the resulting CSV files back to Bob.
+
+### Version history (from CHANGELOG.md)
+
+| Version | Change | Result | Keep / Revert |
+|---------|--------|--------|---------------|
+| V3.0 | Initial physics driver (braking model, racing-line steer, ABS/TC, RPM gear shift) | not run | — |
+| V3.1 | **Steering sign fix (human review):** aim term was *added* instead of *subtracted*, inverting direction | not run | — |
+| V3.2 | Smooth aim (weighted avg of 3 rays), low-pass filter, rolling-min free-distance, BRAKE_DECEL 9→7, braking downshift | not run | — |
+| V3.3 | Remove STRAIGHT_DIST bypass from target-speed; V_CORNER = V_CORNER_MIN + bonus; proportional brake | **1:52.336**, 0 damage | KEEP |
+| V3.4 | `V_CORNER_BONUS` 35 → 45 km/h | **1:47.106**, 0 damage | KEEP |
+| V3.5 | `BRAKE_DECEL` 7.0 → 8.5 m/s² | **1:42.592**, 0 damage | KEEP |
+| V3.6 | `V_CORNER_MIN` 55 → 50 km/h | **1:45.684**, 0 damage | **REVERT** (3.1 s slower) |
+| V3.7 | Revert V3.6; `STEER_SMOOTH` 0.5 → 0.3 | **1:43.842**, 0 damage | **REVERT** (1.25 s slower) |
+| V3.8 | `BRAKE_DECEL` 8.5 → 9.5 m/s² | **1:42.064**, 0 damage, **1 off-track** | **REVERT** (off-track event) |
+| V3.9 | Fix gear table (measured from telemetry); braking downshift 1 gear, brake > 0.5 only | **1:57.840**, 0 damage | REVERT basis for V3.10 |
+| V3.10 | Speed-based gear selection; fix standing-start launch bug | not run independently | — |
+| V3.11 | Lowest eligible gear rule (keep engine high in power band) | **1:44.878**, 0 damage; **CRASH** on repeat | → V3.12 |
+| V3.12 | Distance-blended aim gain; steering dead-band; reduces weave (~430 -> 161 sign flips/lap) | **1:42.868**, 0 damage, 0 off-track | **KEEP — FINAL** |
+
+### Where the human corrected Bob
+
+**1. Steering sign bug (V3.1 — human code review before first race).**
+In `calculate_steering()`, Bob generated `steer = (angle + aim_gain · aim_angle_rad − centering) / STEER_LOCK`.
+In TORCS/SCR a positive track sensor angle means the road opens to the *right*, while a positive steer
+value turns *left*.  Adding the aim term therefore steered the car away from every corner exit.  The human
+identified the sign error from the baseline driver's convention (`src/snakeoil3_gym_BASELINE.py`) before
+any race was run and prompted Bob to subtract the term.  Without this fix the car would have hit the outer
+wall on the first competitive lap.
+
+**2. Invented gear table (V3.9 diagnosis — human hypothesis).**
+The V3.2 braking-downshift rule used a `_GEAR_SPEED_KMH_PER_1000RPM` table with values up to 44 km/h per
+1 000 rpm.  The human observed 6th gear at ~161 km/h showing ~9 300 rpm in telemetry — implying ~17 km/h
+per 1 000 rpm — and raised this as a hypothesis.  Bob confirmed it with telemetry analysis: the measured
+median was 15.89 km/h per 1 000 rpm in 6th (old table: 44 — a **2.8× error**), causing 2–4 gear drops on
+every light braking event and explaining the gear-hunting instability.
+
+**3. Short-shifting rule (V3.11 — human code review).**
+Bob's V3.10 gear rule selected the *highest* gear whose rpm was ≥ `SHIFT_LOW_RPM` (5 500), meaning the
+engine ran near the bottom of its power band after every corner exit.  The human identified this as
+short-shifting and prompted the V3.11 correction: select the *lowest* gear whose rpm is ≤ `SHIFT_HIGH_RPM`
+(9 000), keeping the engine high in the power band for maximum acceleration.
+
+### Where Bob corrected the human's hypotheses
+
+**Crash at distFromStart 2468 m (V3.2 → V3.3 analysis).**
+The human hypothesised that the `STRAIGHT_DIST` bypass (`target = V_MAX` when `d ≥ 100 m`) was the root
+cause of the second crash because stopping from 230 km/h at 7 m/s² requires ~275 m.  Bob confirmed the
+bypass was a latent hazard but refuted it as the cause of *this* crash: in steps 3 145–3 315 the forward
+sensor `track9` never exceeded 94.3 m, so the bypass was almost certainly not active.  The actual cause
+was that `V_CORNER` was derived from the aim angle and came out ~100 km/h — close to the actual speed —
+so the brake term stayed near zero while the car ran straight into the wall.
+
+**Steering oscillation diagnosis (V3.9 telemetry).**
+The human attributed the 13 s gap between two supposedly identical runs to the gear-hunting bug.  Bob's
+analysis showed the gear bug was present in *both* runs (both had ~57 downshifts and 28–37 multi-gear
+drops in the first 2 000 m) and therefore could not explain the 13 s difference.  The real cause was a
+steering limit-cycle oscillation in the second run (184 vs 5 steering sign flips, 30 km/h lower mean speed
+after 2 000 m) that could run independently of gear changes.  This focused V3.10–V3.12 on the steering
+stability problem.
+
+---
+
+## Setup and Run Commands
+
+### Prerequisites
+
+- TORCS with the SCR patch installed and configured for Practice mode on track **corkscrew**.
+- A Python virtual environment at `C:\torcs-env\` with `snakeoil3_gym` dependencies installed.
+
+### Start TORCS
+
+Open TORCS → Race → Practice → select track **Corkscrew** → add `scr_server` as the robot → Start.
+
+### Run the final driver (one lap)
 
 ```powershell
-# 1. Crear entorno virtual
-python -m venv C:\torcs-env
-C:\torcs-env\Scripts\Activate.ps1
+C:\torcs-env\Scripts\python.exe tools\race.py src\torcs_v3_FINAL.py --laps 1
+```
 
-# 2. Instalar dependencias
-pip install numpy scipy scikit-learn torch gymnasium matplotlib pandas
+Telemetry is written to `telemetry/<timestamp>/laps.csv` and `ticks.csv` automatically.
 
-# 3. Lanzar TORCS
-Start-Process -FilePath C:\torcs\torcs\wtorcs.exe -WorkingDirectory C:\torcs\torcs
+### Replay self-tests (no TORCS required)
 
-# 4. En TORCS: Race → Practice → seleccionar scr_server → New Race
+```powershell
+C:\torcs-env\Scripts\python.exe src\torcs_v3_physics.py --selftest
+```
 
-# 5. En otra ventana PowerShell:
-cd C:\torcs\gym_torcs
-python torcs_jm_par.py
+All 11 cases should print `PASS`.
+
+---
+
+## Repository Structure
+
+```
+ibm-ai-racing-2026/
+├── src/
+│   ├── torcs_v3_FINAL.py          # Final submitted driver (V3.12)
+│   ├── torcs_v3_physics.py        # Development driver (V3.12, identical to FINAL)
+│   ├── torcs_jm_par_V2_LOOKAHEAD.py  # Previous best V2 driver
+│   ├── torcs_jm_par_ORIGINAL.py   # Original baseline driver
+│   └── snakeoil3_gym_BASELINE.py  # SCR sensor reference (read-only)
+├── tools/
+│   ├── race.py                    # Race runner and telemetry logger
+│   └── analyze_*.py               # Offline telemetry analysis scripts
+├── telemetry/                     # One directory per race run (laps.csv + ticks.csv)
+├── evidence/
+│   ├── final_lap_laps.csv         # Official final lap: 1:42.868, 0 damage, 0 off-track
+│   └── final_lap_ticks.csv        # Per-tick data for the official lap
+├── docs/
+│   ├── bob-sessions/              # 14 Bob prompt + log pairs (01 – 14)
+│   └── BOB_PROMPTS.md
+├── livery/
+│   └── car1-trb1.rgb              # Custom livery (car physics unchanged)
+├── CHANGELOG.md                   # Full version history with telemetry references
+├── README.md                      # This file
+└── SUBMISSION.md                  # Organiser submission template
 ```
 
 ---
 
-## Parámetros del V2
+## Livery Note
 
-| Parámetro | Valor | Descripción |
-|-----------|-------|-------------|
-| `MIN_SPEED` | 70 | Velocidad objetivo mínima en curvas cerradas (km/h) |
-| `MAX_SPEED` | 120 | Velocidad objetivo máxima en rectas largas (km/h) |
-| `LOOKAHEAD_NEAR` | 30 | Distancia frontal que dispara MIN_SPEED (m) |
-| `LOOKAHEAD_FAR` | 100 | Distancia frontal que dispara MAX_SPEED (m) |
-| `STEER_GAIN` | 35 | Ganancia del volante |
-| `CENTERING_GAIN` | 0.40 | Fuerza de centrado |
-| `BRAKE_CURVE_FACTOR` | 0.8 | Intensidad de frenado proporcional |
-| `EMERGENCY_BRAKE_DIST` | 25 | Distancia crítica para freno máximo (m) |
+A custom livery is provided at [`livery/car1-trb1.rgb`](livery/car1-trb1.rgb).  No car physics, mass,
+tyre model or engine parameters were modified; only the Python control logic changes between versions.
 
 ---
 
-## Circuito: Corkscrew
+## Limitations and Next Steps
 
-Corkscrew es el circuito oficial de la clasificatoria. Tiene 11 curvas incluyendo una ese rápida y dos horquillas cerradas que penalizan fuertemente los agentes con mala gestión del freno. Es la prueba de fuego para un agente de conducción: no perdona exceso de velocidad en entrada.
+**Limitations**
+- The braking model uses a single scalar deceleration parameter (`BRAKE_DECEL = 8.5 m/s²`); lateral load
+  transfer and combined-slip tyre behaviour are not modelled.
+- The racing line is emergent from the sensor-aim heuristic, not a pre-computed optimal line.
+- `V_CORNER_BONUS` uses only the ±30° side rays; narrower chicanes that appear open at ±30° but tight at
+  ±15° are not handled.
+- Repeatability is not perfect: the same code produced 1:42.592 and 1:55.606 in two consecutive runs
+  before V3.9 fixed the gear table; environmental non-determinism in TORCS cannot be fully excluded.
+- Only Corkscrew has been tested; parameter values are not validated on other tracks.
 
-Ruta del circuito: `torcs/tracks/road/corkscrew/`
-
----
-
-## Licencia
-
-Código del agente bajo MIT. Los assets de TORCS y del coche permanecen bajo sus respectivas licencias originales.
-
----
-
-## Créditos
-
-- **Autor**: Alvaro (participante solo)
-- **Competición**: IBM Global AI Racing League 2026
-- **Deadline**: 1 de julio de 2026
-- **Modelo IA**: IBM Granite 4.0 350M via Ollama
-- **Simulador**: TORCS + SCR patch
-- **Starter kit**: `gym_torcs` provisto por IBM
+**Next steps**
+- Add a lap-time predictor that uses segment splits to identify the next highest-gain corner automatically.
+- Replace the scalar `BRAKE_DECEL` with a speed-dependent grip curve derived from measured deceleration data.
+- Extend `V_CORNER_BONUS` to use a wider set of side rays for narrower-corridor detection.
+- Validate on at least one other track before generalising parameters.

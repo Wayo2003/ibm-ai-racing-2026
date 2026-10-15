@@ -1,0 +1,22 @@
+﻿Prepare the final submission documentation from the ACTUAL files in this repository (CHANGELOG.md,
+evidence/, telemetry/*/laps.csv, docs/bob-sessions/*.prompt.txt and *.log, src/). Do not invent anything;
+leave unknown items as "not recorded". Do not modify code or evidence.
+
+1. Rewrite README.md in English as the project front page:
+   - Title: "AI Racing League – Go Full Speed with IBM Bob · Corkscrew 1:42.868, zero damage" (solo entry,
+     Alvaro Cunado).
+   - Problem statement (2-3 sentences) and headline result table: original baseline 3:04.55 (recorded in my
+     earlier project), my previous V2 2:33.244 (standing start, 0 damage, measured today), final V3.12
+     1:42.868 (standing start, 0 damage, 0 off-track, recorded on video). Video link placeholder: VIDEO_URL.
+   - The three enhancements (physics braking-distance target speed; racing-line steering with smooth aim;
+     ABS/traction control + speed-based gear selection) and why each matters.
+   - "How IBM Bob was used": the iterative loop (Bob prompt -> human review -> race -> telemetry -> Bob),
+     a table of every version from CHANGELOG.md with change, result and keep/revert, and the cases where I
+     reviewed and corrected Bob (steering sign bug found before the first race, invented gear table,
+     short-shifting rule) or Bob corrected my hypotheses.
+   - Setup and exact run commands (TORCS Practice on Corkscrew with scr_server; 
+     C:\torcs-env\Scripts\python.exe tools\race.py src\torcs_v3_FINAL.py --laps 1), repository structure,
+     livery note (livery/car1-trb1.rgb, car physics unchanged), limitations and next steps.
+2. Create SUBMISSION.md filling the organiser template exactly (Name: Alvaro Cunado; Project Members:
+   solo; GitHub Link: https://github.com/AlvaroCunado2003/ibm-ai-racing-2026; Video Demonstration:
+   VIDEO_URL; Project Description / Problem Statement; Enhancements 1-3; Use of IBM Bob and AI), concise.
