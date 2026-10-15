@@ -74,6 +74,8 @@ def main():
                             S.get("damage"), R.get("gear"), round(S.get("rpm", 0.0)),
                             round(R.get("steer", 0.0), 3), round(R.get("accel", 0.0), 2),
                             round(R.get("brake", 0.0), 2), round(S["track"][9], 1)])
+            if step % 50 == 0:
+                tick_f.flush()  # keep data if the run is stopped by hand
 
             last = S.get("lastLapTime", 0.0) or 0.0
             if last > 0 and abs(last - prev_last) > 1e-6:

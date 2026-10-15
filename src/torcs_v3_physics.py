@@ -22,6 +22,11 @@ V3.11 fix:
 9. Target gear changed to the LOWEST gear in [2..6] whose rpm-at-speed <= SHIFT_HIGH_RPM (9000).
    Keeps engine high in the power band (6000-9000 rpm) out of corners instead of short-shifting
    at the 5500 rpm floor.
+V3.12 fix:
+10. Steering weave eliminated: aim term active only when approaching corners (free distance < STRAIGHT_DIST)
+    and smoothly blended with distance; aim gain on straights set to 0.0 (replaces step switch);
+    added small dead-band (STEER_DEADBAND = 0.01) to eliminate zero-crossing chatter; kept STEER_SMOOTH = 0.5.
+    Speed, braking, and gear shifting parameters unchanged.
 """
 import math
 import sys as _sys
@@ -48,7 +53,7 @@ PARAMS = {
     "CENTERING_GAIN": 0.40,       # Base gain to center vehicle within track bounds
     "TRACK_MARGIN": 0.70,         # |trackPos| threshold beyond which extra centering applies
     "EXTRA_CENTERING_GAIN": 1.20, # Additional centering gain when exceeding TRACK_MARGIN
-    "STRAIGHT_STEER_AIM": 0.25,   # Reduced steer aim gain on straights to prevent weaving
+    "STEER_DEADBAND": 0.01,       # V3.12: small dead-band to eliminate straight-line chatter around zero
     "STEER_LOCK": 0.366,          # Maximum steering lock angle in radians (TORCS car standard)
     "STEER_AIM_TOP_N": 3,         # Number of longest rays used in weighted-average aim  [V3.2]
     "STEER_SMOOTH": 0.5,          # Low-pass coefficient for steering: steer = α*prev + (1-α)*raw [V3.2; V3.7 tried 0.3 -> REVERT]
@@ -197,10 +202,12 @@ def calculate_steering(S):
     d = get_free_distance_ahead(S)
     aim_angle_rad = get_aim_angle_rad(S)
 
-    # Reduce aim gain on straights to prevent high-speed oscillation
-    aim_gain = (
-        PARAMS["STRAIGHT_STEER_AIM"] if d >= PARAMS["STRAIGHT_DIST"] else PARAMS["STEER_AIM"]
-    )
+    # V3.12: Smooth distance-based aim blending; zero on open straights
+    if d >= PARAMS["STRAIGHT_DIST"]:
+        aim_gain = 0.0
+    else:
+        blend = (PARAMS["STRAIGHT_DIST"] - d) / PARAMS["STRAIGHT_DIST"]
+        aim_gain = PARAMS["STEER_AIM"] * blend
 
     trackPos = S.get("trackPos", 0.0)
     angle = S.get("angle", 0.0)
@@ -216,7 +223,11 @@ def calculate_steering(S):
     raw_steer = (angle - aim_gain * aim_angle_rad - centering) / PARAMS["STEER_LOCK"]
     raw_steer = max(-1.0, min(1.0, raw_steer))
 
-    # V3.2: low-pass filter
+    # V3.12: Dead-band around zero to eliminate micro-chatter on straights
+    if abs(raw_steer) < PARAMS["STEER_DEADBAND"]:
+        raw_steer = 0.0
+
+    # Low-pass filter (STEER_SMOOTH = 0.5)
     alpha = PARAMS["STEER_SMOOTH"]
     steer = alpha * _prev_steer + (1.0 - alpha) * raw_steer
     steer = max(-1.0, min(1.0, steer))
@@ -600,6 +611,32 @@ def _run_selftest():
     check(
         f"200 km/h in 6th → stays 6th (gear={gear}, gear-6 rpm={r6:.0f} > SHIFT_HIGH_RPM {PARAMS['SHIFT_HIGH_RPM']}, no target → hold)",
         gear == 6,
+        0.0,
+    )
+
+    # --- Case 11 (V3.12): noisy sensor frames on a straight → <= 2 sign changes ---
+    # Scenario: car is driving at 150 km/h on a straight (d >= STRAIGHT_DIST).
+    # Sensor rays ahead have alternating left/right noise across 50 frames.
+    # In V3.11 this caused dozens of sign flips; in V3.12 aim_gain is 0 on straights
+    # and the dead-band suppresses jitter, resulting in <= 2 sign changes (0 in steady state).
+    _reset_state()
+    straight_flips = 0
+    prev_s = None
+    for i in range(50):
+        t = [20.0] * 19
+        t[8] = 150.0 + (30.0 if i % 2 == 0 else -20.0)
+        t[9] = 160.0
+        t[10] = 150.0 + (30.0 if i % 2 == 1 else -20.0)
+        t[7] = 100.0 + (20.0 if i % 2 == 0 else -10.0)
+        t[11] = 100.0 + (20.0 if i % 2 == 1 else -10.0)
+        S = _make_state(t, angle=0.0, trackPos=0.0, speedX=150.0)
+        s = calculate_steering(S)
+        if prev_s is not None and ((s > 0 and prev_s < 0) or (s < 0 and prev_s > 0)):
+            straight_flips += 1
+        prev_s = s
+    check(
+        f"Noisy straight (50 frames) → <= 2 sign changes (got {straight_flips})",
+        straight_flips <= 2,
         0.0,
     )
 

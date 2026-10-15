@@ -1,0 +1,16 @@
+﻿Repeatability: V3.11 ran 1:44.878 (0 damage) once, then CRASHED on the repeat
+(telemetry/torcs_v3_physics_20261015-122826; the last second before the crash was lost because the run was
+stopped by hand). In the saved ticks, even on calm sections at ~90 km/h (distFromStart 2316-2366) steering
+oscillates continuously between about -0.9 and +0.9 every ~6-12 ticks while |trackPos| stays < 0.45.
+You flagged steering sign flips earlier as the next suspect.
+
+1. Count steering sign changes per 100 m in the V3.11 runs and show where the weaving is worst. Separate
+   observation from hypothesis about the cause (aim term switching between the top-3 rays vs. the angle
+   feedback gain 1/STEER_LOCK, vs. the low-pass filter).
+2. Make V3.12 with the smallest change that removes the weaving without slowing corners. Preferred
+   approach: use the aim term only when the car is approaching a corner (free distance < STRAIGHT_DIST)
+   and blend it in smoothly with distance instead of switching; add a small dead-band; keep STEER_SMOOTH
+   0.5. Do not change speed/braking/gear parameters.
+3. Add a self-test: a sequence of noisy sensor frames on a straight must not produce more than 2 steering
+   sign changes. Run the self-tests. Add V3.11 results (1:44.878 clean, then crash) and V3.12 to
+   CHANGELOG.md. Do not run the race or invent lap times.

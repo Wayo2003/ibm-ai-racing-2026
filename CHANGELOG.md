@@ -4,9 +4,40 @@ All notable changes to the IBM AI Racing 2026 driver are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
+## [V3.12] — Smooth distance-blended aim & steering deadband (weave elimination)
+
+**Result of V3.12: not run yet — no lap time or damage claimed.**
+
+### Diagnosis of V3.11 steering oscillation & crash
+- **Telemetry analysis of V3.11 runs:**
+  - Run 1 (`telemetry/torcs_v3_physics_20261015-121538/`): lap **1:44.878**, damage **0**, max speed **203.1 km/h**. Fast clean lap, but logged **427 steering sign flips** across the 3608 m lap (~11.8 flips / 100 m), with continuous chatter even on straight segments (12–19 flips per 100 m).
+  - Run 2 repeat (`telemetry/torcs_v3_physics_20261015-122826/`): **CRASHED** on repeat (stopped by hand at dist ~2366 m; 290 sign flips logged in 2366 m, ~12.3 flips / 100 m).
+  - Worst weaving: between 2100 m and 2366 m, steering entered a violent limit cycle. Specifically at dist 2316–2366 m at ~90 km/h, steer oscillated between −0.925 and +0.975 every 6–12 ticks with mean |steer| = 0.664 while |trackPos| stayed moderate (−0.19 to −0.45), culminating in loss of control at the hairpin approach.
+- **Root cause separation (observation vs hypothesis):**
+  - *Observation:* On straights (`d >= 100 m`), `STRAIGHT_STEER_AIM = 0.25` constantly injected alternating aim angles into raw steer as sensor distances fluctuated between adjacent rays (e.g. ±5° rays).
+  - *Hypothesis 1 (Aim switching trigger):* High-speed sensor noise and ray switching acted as a persistent driving excitation into the steering controller on straights.
+  - *Hypothesis 2 (High angle feedback gain):* The angle gain `1 / STEER_LOCK ≈ 2.732` heavily amplified any resulting yaw angle disturbances.
+  - *Hypothesis 3 (Filter phase lag):* With `STEER_SMOOTH = 0.5`, the 1-tick delay reduced phase margin, creating an underdamped feedback loop that locked into large-amplitude limit cycles once disturbed.
+
+### Changed (`src/torcs_v3_physics.py`)
+- **Aim gain distance blending:** Aim term is active ONLY when approaching a corner (`d < STRAIGHT_DIST = 100.0 m`).
+  - On open straights (`d >= STRAIGHT_DIST`), `aim_gain = 0.0` unconditionally (eliminating aim noise and ray switching chatter).
+  - When approaching corners (`d < STRAIGHT_DIST`), `aim_gain` is blended linearly with distance: `aim_gain = STEER_AIM * (STRAIGHT_DIST - d) / STRAIGHT_DIST`.
+  - Replaced the abrupt step switch (`STRAIGHT_STEER_AIM = 0.25` vs `STEER_AIM = 0.35`).
+- **Steering deadband:** Added `PARAMS["STEER_DEADBAND"] = 0.01` on `raw_steer` to suppress micro-corrections and chatter around zero.
+- **Parameters preserved:** Kept `STEER_SMOOTH = 0.5`, and kept all speed (`V_MAX`, `V_CORNER_MIN`, `V_CORNER_BONUS`), braking (`BRAKE_DECEL`, `BRAKE_RANGE`), and gear shifting parameters unchanged.
+
+### Added (self-tests)
+- **Case 11 (V3.12):** Sequence of 50 noisy sensor frames on a straight (`d >= 100 m`, alternating ±5° sensor noise) → produced **0 steering sign changes** (asserts `<= 2`). **PASS.**
+- `python src/torcs_v3_physics.py --selftest` → all 11 checks PASS.
+
+---
+
 ## [V3.11] — Optimal acceleration gear selection (lowest gear <= SHIFT_HIGH_RPM)
 
-**Result of V3.11: not run yet — no lap time or damage claimed.**
+**Result of V3.11:**
+- Run 1 (`telemetry/torcs_v3_physics_20261015-121538/`): lap **1:44.878**, damage **0.0**, max speed **203.1 km/h**, 0 offtrack events.
+- Run 2 repeat (`telemetry/torcs_v3_physics_20261015-122826/`): **CRASH** at dist ~2366 m (stopped by hand before impact; steering limit-cycle oscillation at 2316–2366 m).
 
 ### Diagnosis of V3.10 gear rule
 - **Short-shifting under acceleration:** In V3.10, `shift_gears()` selected the highest gear in [2..6] whose rpm was >= `SHIFT_LOW_RPM` (5500).
