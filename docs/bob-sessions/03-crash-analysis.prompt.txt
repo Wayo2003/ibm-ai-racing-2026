@@ -1,0 +1,23 @@
+﻿First race of src/torcs_v3_physics.py (V3.1) on Corkscrew: the car CRASHED (damage 123) at
+distFromStart ~2468 m, 66.6 s into lap 1, after reaching 222 km/h. Telemetry: telemetry/torcs_v3_physics_20261015-104305/ticks.csv
+(laps.csv does not exist because the lap was not completed).
+
+Read ticks.csv, especially steps 3080-3265. Report what the data shows, separating observations from
+hypotheses. My own reading, to confirm or refute with the data:
+ (a) steering is bang-bang: steer flips between -1.0 and +1.0 every few ticks, because the index of the
+     longest ray jumps between sides and STEER_AIM=1.0 divided by STEER_LOCK saturates the output;
+ (b) because of the weaving, track9 / free distance jumps (e.g. 14 m -> 101 m -> 40 m), so the braking
+     model sees a long free distance and brakes too late: at step 3205 the car is still at 125 km/h with
+     only 17.6 m ahead in a sharp left corner.
+
+Then make V3.2 in the same file with the smallest set of changes that addresses these causes:
+ 1. Smooth aim: instead of the single longest ray, use a distance-weighted average of the angles of the
+    3 longest rays; cap the aim contribution; use STEER_AIM around 0.35; and low-pass filter the final
+    steering command (new PARAM STEER_SMOOTH, e.g. steer = 0.5*prev + 0.5*raw).
+ 2. Robust free distance: use a short memory (minimum of the last ~5 ticks) of the forward distance for
+    the braking model, so a single long reading cannot cancel braking.
+ 3. Safer braking: BRAKE_DECEL 7.0, V_CORNER_SHARP 60, and full brake (1.0) when the required
+    deceleration exceeds BRAKE_DECEL. Downshift when braking so the gear matches the speed.
+Keep every value in PARAMS. Update the self-test so it still passes (add a test that a single jump of
+the longest ray does not flip the steering sign). Run the self-test. Append V3.2 to CHANGELOG.md with
+the crash evidence (step, distFromStart, speed, damage). Do not run the race or invent lap times.
