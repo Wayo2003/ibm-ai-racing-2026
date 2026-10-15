@@ -4,6 +4,60 @@ All notable changes to the IBM AI Racing 2026 driver are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
+## [V3.9] - Braking downshift fixed (measured gear table, 1 gear at a time, hard-brake only)
+
+All other PARAMS are V3.5 values (`BRAKE_DECEL` 8.5, `V_CORNER_MIN` 55, `STEER_SMOOTH` 0.5, ...). Only the shift logic changed.
+**Result of V3.9: not run yet - no lap time or damage claimed.**
+
+### Repeatability analysis (ticks.csv, 0.02 s/tick, lap time > 0, one lap in each file)
+Runs: GOOD = `torcs_v3_physics_20261015-112700` (1:42.592), REPEAT = `torcs_v3_FINAL_20261015-115214` (1:55.606, damage 0). `src/torcs_v3_FINAL.py` and `src/torcs_v3_physics.py` were byte-identical before V3.9 (same code, same params).
+
+| Measure | GOOD | REPEAT |
+|---|---|---|
+| time at 2000 / 2500 / 3500 m | 57.43 / 70.78 / 100.35 s | 58.47 / 75.71 / 111.90 s (+1.04 / +4.93 / +11.55) |
+| gear changes, lap time > 0 (0-3600 m) | 152 | 176 |
+| gear changes 0-2000 m / 2000-3600 m | 88 / 64 | 86 / 90 |
+| downshifts (whole lap) | 58 | 57 |
+| downshifts dropping >= 2 gears | 28 | 37 (one 4-gear drop) |
+| downshifts where previous-tick brake <= 0.3 | 58 of 58 | 51 of 57 |
+| downshifts where previous-tick brake > 0.5 | 0 | 1 |
+| mean speed 2000-2500 / 2500-3000 / 3000-3600 m | 134.7 / 117.8 / 130.0 km/h | 104.0 / 98.7 / 99.2 km/h |
+| steering sign flips (|steer| > 0.3), whole lap | 5 | 184 (45 in 2000-2500, 36 in 2500-3000, 63 in 3000-3500) |
+| ticks with |steer| > 0.95 in 2000-3600 m | 141 | 314 |
+
+The two runs are identical until about tick 483 (small steer/distance differences), then diverge slowly; the first |dv| > 0.5 km/h is at tick 653 (~359 m). The split is +0.8 s at 1500 m and +1.0 s at 2000 m, then the loss grows with the steering oscillation.
+
+### Measured km/h per 1000 rpm (median of speedX / (rpm/1000), both runs, brake == 0, gear constant +-5 ticks, speedX > 20)
+| Gear | measured | n | old table (V3.2) | old / measured |
+|---|---|---|---|---|
+| 1 | not measurable (only the standing start, speed ~0) | - | 8.5 | - |
+| 2 | 8.78 | 63 | 14.5 | 1.7x |
+| 3 | 10.85 | 209 | 20.5 | 1.9x |
+| 4 | 12.96 | 1165 | 28.0 | 2.2x |
+| 5 | 14.56 | 1030 | 36.0 | 2.5x |
+| 6 | 15.89 | 3794 | 44.0 | 2.8x |
+
+6th at 161 km/h is therefore ~10.1k rpm (15.9 km/h per 1000 rpm), close to but not exactly the 17 km/h / 9300 rpm estimate in the report. The old table is 1.7-2.8x too tall in every gear.
+
+### Verdict on the hypothesis
+- **Confirmed: the table is invented and wrong.** Replaying the old rule (`speed <= table[g] * 7.2`, first `g` from 1) on the previous-tick gear and speed reproduces the observed target gear in **58 of 58** (GOOD) and **57 of 57** (REPEAT) downshifts. E.g. 100 km/h in 6th gives `14.5 * 7.2 = 104 km/h` -> gear 2 (real rpm in 2nd at 100 km/h would be ~11.4k). The rule fired on any `brake > 0` (observed brake 0.0-0.3 at almost every downshift) and, because of the wrong table, dropped 2-4 gears; 51-54 of 57-58 downshifts in each run were followed by an upshift within 0.8 s (hunting).
+- **Not confirmed as the sole cause of the 13 s.** The same bug is present in the fast run: both runs have ~57 downshifts and 28-37 multi-gear drops, and gear changes before 2000 m are 88 vs 86. So the table explains the hunting in both laps, but it does not by itself explain why one lap is 13 s slower.
+- **Where the extra loss actually is:** from 2000 m the REPEAT shows steering limit-cycle oscillation (184 vs 5 sign flips, mean |steer| 0.47/0.39/0.55 vs 0.18/0.13/0.15) and ~30 km/h lower mean speed. Part of it coincides with gear changes (gear 6 -> 3 -> 4 -> 5 at 2070-2100 m with brake 0.21 followed by a brake spike of 1.00 at 2085 m). But at ~2260-2310 m the REPEAT oscillates +-0.5..0.96 steer every ~10 ticks at ~102 km/h in **6th gear with no gear change for ~50 ticks** (track9 alternating 36 <-> 120 m). So the steering oscillation can run without gear hunting; the gear bug is an aggravating factor / trigger (engine-braking jolts and rpm spikes up to 14-15k), not proven to be the root cause.
+- **Not verified:** whether V3.9 restores 1:42.6 in a repeat. That needs a race (not run). If a repeat still shows steering sign flips > ~20 per lap, the steering aim/centering loop (`STEER_AIM`, aim ray switching at slow speed) is the next suspect.
+
+### Changed (`src/torcs_v3_physics.py`)
+- `_GEAR_SPEED_KMH_PER_1000RPM` = `[0.0, 0.0, 8.78, 10.85, 12.96, 14.56, 15.89]` (measured, see above; gear 1 left at 0.0 because it was not measured).
+- `shift_gears(S, current_gear, brake=0.0)` (was `braking=bool`; `brake` is now the commanded brake value). Braking downshift only if **all** hold: `brake > 0.5`, `gear > 2`, `rpm < GEAR_DOWN_RPM_BRAKE`, and the rpm in the lower gear (`speed / table[gear-1] * 1000`) is `<= GEAR_UP_RPM`. It drops exactly **one** gear and never targets gear 1. `GEAR_HOLD_TICKS` (15) is still applied before it; normal rpm up/down shifting unchanged.
+- Callers in `drive_v3` updated (`brake=brake`; recovery path uses the default).
+
+### Added
+- `PARAMS["GEAR_DOWN_RPM_BRAKE"] = 5500`.
+- Self-test cases 8-10: (8) 100 km/h, 6th, brake 0.3, 100 ticks -> gear never below 5 (the old code gave gear 2); (9) 80 km/h, 6th, brake 0.8, rpm ~5035 -> 5th; (10) a downshift that would exceed `GEAR_UP_RPM` is refused. `python src/torcs_v3_physics.py --selftest`: all 10 checks PASS.
+- `src/torcs_v3_FINAL.py` is left untouched (frozen V3.5 reference).
+
+---
+
+
 
 ## [V3.8] — Increase BRAKE_DECEL (8.5 → 9.5) based on V3.5 telemetry showing measured grip headroom
 

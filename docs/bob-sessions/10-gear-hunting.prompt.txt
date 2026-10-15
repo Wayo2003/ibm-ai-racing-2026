@@ -1,0 +1,19 @@
+﻿Repeatability problem. The frozen driver (src/torcs_v3_FINAL.py, = V3.5 params) ran 1:42.592 in
+telemetry/torcs_v3_physics_20261015-112700 but only 1:55.606 (0 damage) in the recorded repeat
+telemetry/torcs_v3_FINAL_20261015-115214. Section splits show the loss is almost all after 2000 m
+(+1.0 s at 2000 m, +4.9 s at 2500 m, +11.6 s at 3500 m).
+
+In the repeat, ticks around distFromStart 2400-2700 show violent gear hunting: e.g. gear 6 -> 2 at ~100 km/h,
+then 3, 2, 3, 4, 5, 6, 2, 3, 2, 3, 4 within a few hundred metres, with brake only 0.2-0.3. Hypothesis: the
+braking downshift added in V3.2 uses an invented table _GEAR_SPEED_KMH_PER_1000RPM; the telemetry shows
+6th gear at ~161 km/h is ~9300 rpm (about 17 km/h per 1000 rpm, not 44), so any light braking selects a
+far too low gear, causing engine-braking spikes, wheel slip and steering corrections.
+
+1. Confirm or refute with both ticks.csv files (count gear changes per lap in each run, and look at rpm vs
+   speedX per gear to estimate the real km/h per 1000 rpm for each gear 1-6).
+2. Fix V3.9 in src/torcs_v3_physics.py: replace the table with values measured from the telemetry, only
+   downshift ONE gear at a time, only when brake > 0.5 AND rpm < GEAR_DOWN_RPM_BRAKE (new PARAM, e.g. 5500),
+   never downshift if the resulting rpm would exceed GEAR_UP_RPM, and keep GEAR_HOLD_TICKS.
+   Do not change any other parameter (corner speeds, braking, steering stay as V3.5).
+3. Add a self-test: at 100 km/h in 6th with brake 0.3 the gear must not drop below 5. Run the self-test.
+4. Add the analysis and V3.9 to CHANGELOG.md. Do not run the race or invent lap times.

@@ -10,6 +10,9 @@ V3.2 additions:
 5. Robust free distance: rolling minimum over the last N ticks so a single long spike cannot cancel braking.
 6. Safer braking: lower BRAKE_DECEL / V_CORNER_SHARP, full brake when required deceleration exceeds
    BRAKE_DECEL, and automatic downshift during braking.
+V3.9 fix:
+7. Braking downshift rewritten: measured gear table, one gear at a time, only under hard braking
+   (brake > 0.5) with low rpm, never into an rpm above GEAR_UP_RPM.
 """
 import math
 import sys as _sys
@@ -46,6 +49,7 @@ PARAMS = {
     "TC_GAIN": 0.08,          # Proportional cut per unit of excessive wheel spin diff
     "GEAR_UP_RPM": 7200,      # Engine RPM threshold to upshift (gears 1-5 -> 2-6)
     "GEAR_DOWN_RPM": 3200,    # Engine RPM threshold to downshift (gears 2-6 -> 1-5)
+    "GEAR_DOWN_RPM_BRAKE": 5500,  # V3.9: braking downshift only if rpm is below this (and brake > 0.5)
     "GEAR_HOLD_TICKS": 15,    # Minimum simulation steps (~0.3s) between gear shifts
     "WHEEL_RADIUS": 0.3179,   # Wheel radius in meters (for wheel speed computation)
     # --- Enhancement 4 (V3.2): Robust braking distance memory ---
@@ -268,16 +272,20 @@ def calculate_throttle_and_brake(S, steer, target_speed):
     return accel, brake
 
 
-# Gear ratio lookup (approximate km/h per 1000 RPM for a typical TORCS car)
-# Used to pick the correct gear for a given speed when braking.
-_GEAR_SPEED_KMH_PER_1000RPM = [0.0, 8.5, 14.5, 20.5, 28.0, 36.0, 44.0]  # index = gear
+# V3.9: km/h per 1000 rpm for each gear, MEASURED as median(speedX / (rpm/1000)) over ticks.csv of
+# torcs_v3_physics_20261015-112700 and torcs_v3_FINAL_20261015-115214 (lap time > 0, speedX > 20,
+# brake == 0, gear constant over +-5 ticks). index = gear.
+# Gear 1 was never driven at speed in the telemetry (only the standing start), so it is not measured;
+# the braking downshift never targets gear 1 (see shift_gears).
+_GEAR_SPEED_KMH_PER_1000RPM = [0.0, 0.0, 8.78, 10.85, 12.96, 14.56, 15.89]
 
 
-def shift_gears(S, current_gear, braking=False):
+def shift_gears(S, current_gear, brake=0.0):
     """RPM-based transmission shifting with minimum hold time between shifts.
 
-    V3.2: when braking=True, also downshift to match engine speed to road speed
-    so the gear is correct for corner exit acceleration.
+    V3.9: braking downshift is a single gear step, only when brake > 0.5 AND rpm <
+    GEAR_DOWN_RPM_BRAKE, and only if the rpm in the lower gear (speed / measured km/h per
+    1000 rpm) would not exceed GEAR_UP_RPM. It never targets gear 1.
     """
     global _last_shift_step, _current_step
     _current_step += 1
@@ -290,19 +298,11 @@ def shift_gears(S, current_gear, braking=False):
     if (_current_step - _last_shift_step) < PARAMS["GEAR_HOLD_TICKS"]:
         return max(1, min(6, gear))
 
-    if braking and gear > 1:
-        # V3.2: downshift to the highest gear whose max speed exceeds current speed.
-        # _GEAR_SPEED_KMH_PER_1000RPM[g] * GEAR_UP_RPM/1000 gives roughly the
-        # upshift speed for gear g — use it as the gear's comfortable max speed.
-        target_gear = gear
-        for g in range(1, gear):
-            max_speed_g = _GEAR_SPEED_KMH_PER_1000RPM[g] * PARAMS["GEAR_UP_RPM"] / 1000.0
-            if speed <= max_speed_g:
-                target_gear = g
-                break
-        if target_gear < gear:
+    if brake > 0.5 and gear > 2 and rpm < PARAMS["GEAR_DOWN_RPM_BRAKE"]:
+        rpm_lower = speed / _GEAR_SPEED_KMH_PER_1000RPM[gear - 1] * 1000.0
+        if rpm_lower <= PARAMS["GEAR_UP_RPM"]:
             _last_shift_step = _current_step
-            return max(1, min(6, target_gear))
+            return gear - 1
 
     if gear < 6 and rpm > PARAMS["GEAR_UP_RPM"]:
         gear += 1
@@ -337,7 +337,7 @@ def drive_v3(c):
         R["accel"] = accel
         R["brake"] = brake
         R["steer"] = steer
-        R["gear"] = shift_gears(S, R.get("gear", 1), braking=False)
+        R["gear"] = shift_gears(S, R.get("gear", 1))
         return
 
     # Priority 2: Physics-based control
@@ -348,7 +348,7 @@ def drive_v3(c):
     R["steer"] = steer
     R["accel"] = accel
     R["brake"] = brake
-    R["gear"] = shift_gears(S, R.get("gear", 1), braking=(brake > 0.0))
+    R["gear"] = shift_gears(S, R.get("gear", 1), brake=brake)
 
 
 def _reset_state():
@@ -525,6 +525,33 @@ def _run_selftest():
         abs(target - expected_target) < 0.1,
         0.0,
     )
+
+    # --- Case 8 (V3.9): light braking at 100 km/h in 6th must not drop below 5th ---
+    # rpm taken from the measured table (100 / 15.89 * 1000), brake 0.3, many ticks.
+    _reset_state()
+    gear = 6
+    S = _make_state([200.0] * 19, speedX=100.0)
+    S["rpm"] = 100.0 / _GEAR_SPEED_KMH_PER_1000RPM[6] * 1000.0
+    min_gear = 6
+    for _ in range(100):
+        gear = shift_gears(S, gear, brake=0.3)
+        min_gear = min(min_gear, gear)
+    check(f"100 km/h, 6th, brake 0.3 → gear >= 5 (min gear seen={min_gear})", min_gear >= 5, 0.0)
+
+    # --- Case 9 (V3.9): hard braking, low rpm → exactly one gear down ---------
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=80.0)
+    S["rpm"] = 80.0 / _GEAR_SPEED_KMH_PER_1000RPM[6] * 1000.0   # ~5034 rpm < 5500
+    g = shift_gears(S, 6, brake=0.8)
+    check(f"80 km/h, 6th, brake 0.8, rpm {S['rpm']:.0f} → 5th (got {g})", g == 5, 0.0)
+
+    # --- Case 10 (V3.9): never downshift into an rpm above GEAR_UP_RPM ---------
+    # Synthetic (inconsistent) state: 120 km/h in 5th would be 120/14.56 = 8240 rpm > 7200.
+    _reset_state()
+    S = _make_state([200.0] * 19, speedX=120.0)
+    S["rpm"] = 5000.0
+    g = shift_gears(S, 6, brake=0.8)
+    check(f"120 km/h, 6th, brake 0.8, rpm 5000 → stays 6th, 5th would exceed GEAR_UP_RPM (got {g})", g == 6, 0.0)
 
     print()
     if failures == 0:
